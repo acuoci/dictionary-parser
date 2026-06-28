@@ -38,64 +38,65 @@
 #include "DictionaryLexer.h"
 
 #include <stdexcept>
+#include <utility>
 
-namespace OpenSMOKEpp
-{	
-	void DictionaryManager::ErrorMessage(const std::string message) const
-	{
-		throw std::runtime_error("DictionaryManager: " + message);
-	}
-
-	void DictionaryManager::ReadDictionariesFromFile(const std::string file_name)
-	{
-		DictionaryInputFile dict_file(file_name);
-
-		const int number_of_block_lines = static_cast<int>(dict_file.clean_lines().size());
-		
-		// Count number of dictionaries
-		unsigned int n_dictionaries = 0;
-		std::vector<unsigned int> line_dictionaries;
-		for(int i=0;i<number_of_block_lines;i++)
-		{
-			for (std::size_t j = 0; j < Lexer::count_substring_case_insensitive(dict_file.clean_lines()[i], "Dictionary"); ++j)
-			{
-				n_dictionaries++;
-				line_dictionaries.push_back(i+1);
-			}
-		}
-		line_dictionaries.push_back(number_of_block_lines+1);
-
-		if (n_dictionaries == 0)
-		{
-			ErrorMessage("No dictionaries are specified in the current file.");
-		}
-
-		for (unsigned int i = 0; i<n_dictionaries; i++)
-		{
-			DictionaryFile dictionary_file;
-			
-			dictionary_file.SetFileName(file_name);
-			dictionary_file.SetFirstLine(line_dictionaries[i]);
-			for (unsigned int j = line_dictionaries[i] - 1; j<line_dictionaries[i + 1] - 1; j++)
-				dictionary_file.AddLine(dict_file.clean_lines()[j]);
-			dictionary_file.Analyze();
-
-			Dictionary dictionary;
-			dictionary_file.Transfer(dictionary);
-
-			if (map_of_dictionaries_.insert(std::pair<std::string, Dictionary>(dictionary.name(), dictionary)).second == false)
-				std::cout << "Insertion of new dictionary failed. Key was present." << std::endl;
-		}
-	}
-
-	Dictionary& DictionaryManager::operator() (const std::string& name)
-	{
-		std::map<std::string, Dictionary>::iterator dict;
-		dict = map_of_dictionaries_.find(name);
-
-		if(dict == map_of_dictionaries_.end())
-			ErrorMessage("The " + name + " dictionary was not defined.");
-		
-		return dict->second;
-	}
+namespace OpenSMOKEpp {
+void DictionaryManager::ErrorMessage(std::string_view message) const {
+  throw std::runtime_error("DictionaryManager: " + std::string(message));
 }
+
+void DictionaryManager::ReadDictionariesFromFile(std::string_view file_name) {
+  const std::string file_name_string(file_name);
+  DictionaryInputFile dict_file(file_name_string);
+
+  const int number_of_block_lines =
+      static_cast<int>(dict_file.clean_lines().size());
+
+  // Count number of dictionaries
+  unsigned int n_dictionaries = 0;
+  std::vector<unsigned int> line_dictionaries;
+  for (int i = 0; i < number_of_block_lines; i++) {
+    for (std::size_t j = 0; j < Lexer::count_substring_case_insensitive(
+                                    dict_file.clean_lines()[i], "Dictionary");
+         ++j) {
+      n_dictionaries++;
+      line_dictionaries.push_back(i + 1);
+    }
+  }
+  line_dictionaries.push_back(number_of_block_lines + 1);
+
+  if (n_dictionaries == 0) {
+    ErrorMessage("No dictionaries are specified in the current file.");
+  }
+
+  for (unsigned int i = 0; i < n_dictionaries; i++) {
+    DictionaryFile dictionary_file;
+
+    dictionary_file.SetFileName(file_name_string);
+    dictionary_file.SetFirstLine(line_dictionaries[i]);
+    for (unsigned int j = line_dictionaries[i] - 1;
+         j < line_dictionaries[i + 1] - 1; j++)
+      dictionary_file.AddLine(dict_file.clean_lines()[j]);
+    dictionary_file.Analyze();
+
+    Dictionary dictionary;
+    dictionary_file.Transfer(dictionary);
+
+    if (map_of_dictionaries_.emplace(dictionary.name(), std::move(dictionary))
+            .second == false)
+      std::cout << "Insertion of new dictionary failed. Key was present."
+                << std::endl;
+  }
+}
+
+Dictionary &DictionaryManager::operator()(std::string_view name) {
+  const std::string dictionary_name(name);
+  std::map<std::string, Dictionary>::iterator dict;
+  dict = map_of_dictionaries_.find(dictionary_name);
+
+  if (dict == map_of_dictionaries_.end())
+    ErrorMessage("The " + dictionary_name + " dictionary was not defined.");
+
+  return dict->second;
+}
+} // namespace OpenSMOKEpp

@@ -45,9 +45,10 @@
 #include <unordered_set>
 
 namespace OpenSMOKEpp {
-void DictionaryGrammar::ErrorMessage(const std::string message) const {
+void DictionaryGrammar::ErrorMessage(std::string_view message) const {
   throw std::runtime_error("Grammar defined in file " +
-                           file_name_.filename().string() + ": " + message);
+                           file_name_.filename().string() + ": " +
+                           std::string(message));
 }
 
 void DictionaryGrammar::DefineRules() {
@@ -77,8 +78,8 @@ void DictionaryGrammar::AddKeyWord(const DictionaryKeyWord &keyword) {
   keywords_.push_back(keyword);
 }
 
-void DictionaryGrammar::ReadFromFile(const std::string file_name) {
-  file_name_ = std::filesystem::path(file_name);
+void DictionaryGrammar::ReadFromFile(std::string_view file_name) {
+  file_name_ = std::filesystem::path(std::string(file_name));
   keywords_.clear();
   list_of_keywords_names_.clear();
   number_of_keywords_ = 0;
@@ -432,7 +433,7 @@ void DictionaryGrammar::CheckExistence() {
   }
 }
 
-bool DictionaryGrammar::CheckType(const std::string keyword_name,
+bool DictionaryGrammar::CheckType(std::string_view keyword_name,
                                   const DictionaryKeyWordTypes expected_type) {
   std::vector<std::string>::iterator it =
       find(list_of_keywords_names_.begin(), list_of_keywords_names_.end(),

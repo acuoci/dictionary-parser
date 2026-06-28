@@ -41,9 +41,10 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 namespace OpenSMOKEpp {
-void DictionaryFile::ErrorMessage(const std::string message) const {
+void DictionaryFile::ErrorMessage(std::string_view message) const {
   std::stringstream stream;
   stream << "Dictionary " << name_ << " starting at line " << index_first_line_
          << " of file " << file_name_ << ": " << message;
@@ -330,7 +331,8 @@ void DictionaryFile::Transfer(Dictionary &dictionary) {
   // Set the dictionary
   dictionary.SetName(name_);
   dictionary.SetFileName(file_name_);
-  dictionary.SetDictionary(keywords, options, startingline, endingline);
+  dictionary.SetDictionary(std::move(keywords), std::move(options),
+                           std::move(startingline), std::move(endingline));
 }
 
 } // namespace OpenSMOKEpp
