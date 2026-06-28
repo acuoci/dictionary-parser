@@ -34,63 +34,62 @@
 \*-----------------------------------------------------------------------*/
 
 #ifndef OpenSMOKEpp_DictionaryManager_H
-#define	OpenSMOKEpp_DictionaryManager_H
+#define OpenSMOKEpp_DictionaryManager_H
 
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "DictionaryInputFile.h"
 #include "Dictionary.h"
+#include "DictionaryInputFile.h"
 
-namespace OpenSMOKEpp
-{
-	/**
-	 * \brief Owns all dictionaries parsed from one or more input files.
-	 *
-	 * The manager parses top-level `Dictionary <name> { ... }` blocks and
-	 * stores each block in a `std::map` keyed by dictionary name. It performs
-	 * syntax-level parsing only; semantic grammar validation is performed on a
-	 * retrieved `Dictionary`.
-	 */
-	class DictionaryManager
-	{
-	public:
-		/**
-		 * \brief Reads all dictionary blocks from a file.
-		 *
-		 * \param[in] file_name Path to an input file using dictionary syntax.
-		 * \warning Throws `std::runtime_error` if the file cannot be read, if
-		 * no dictionary blocks are present, or if a contained dictionary block is
-		 * syntactically malformed.
-		 * \note Duplicate dictionary names are reported to the standard output by
-		 * the current implementation and are not inserted a second time.
-		 */
-		void ReadDictionariesFromFile(const std::string file_name);
+namespace OpenSMOKEpp {
+/**
+ * \brief Owns all dictionaries parsed from one or more input files.
+ *
+ * The manager parses top-level `Dictionary <name> { ... }` blocks and
+ * stores each block in a `std::map` keyed by dictionary name. It performs
+ * syntax-level parsing only; semantic grammar validation is performed on a
+ * retrieved `Dictionary`.
+ */
+class DictionaryManager {
+public:
+  /**
+   * \brief Reads all dictionary blocks from a file.
+   *
+   * \param[in] file_name Path to an input file using dictionary syntax.
+   * \warning Throws `std::runtime_error` if the file cannot be read, if
+   * no dictionary blocks are present, or if a contained dictionary block is
+   * syntactically malformed.
+   * \note Duplicate dictionary names are reported to the standard output by
+   * the current implementation and are not inserted a second time.
+   */
+  void ReadDictionariesFromFile(std::string_view file_name);
 
-		/**
-		 * \brief Returns a parsed dictionary by name.
-		 *
-		 * \param[in] name Dictionary name exactly as declared after the
-		 * `Dictionary` token in the input file.
-		 * \return Mutable reference to the stored dictionary.
-		 * \warning Throws `std::runtime_error` if no dictionary with `name` was
-		 * loaded.
-		 */
-		Dictionary& operator() (const std::string& name);
+  /**
+   * \brief Returns a parsed dictionary by name.
+   *
+   * \param[in] name Dictionary name exactly as declared after the
+   * `Dictionary` token in the input file.
+   * \return Mutable reference to the stored dictionary.
+   * \warning Throws `std::runtime_error` if no dictionary with `name` was
+   * loaded.
+   */
+  Dictionary &operator()(std::string_view name);
 
-	private:
-		/** \brief Dictionaries indexed by their declared names. */
-		std::map<std::string, Dictionary> map_of_dictionaries_;
+private:
+  /** \brief Dictionaries indexed by their declared names. */
+  std::map<std::string, Dictionary> map_of_dictionaries_;
 
-		/**
-		 * \brief Raises a manager-scoped parsing or lookup error.
-		 *
-		 * \param[in] message Diagnostic message without class prefix.
-		 * \warning Always throws `std::runtime_error`.
-		 */
-		void ErrorMessage(const std::string message) const;
-	};
-}
+  /**
+   * \brief Raises a manager-scoped parsing or lookup error.
+   *
+   * \param[in] message Diagnostic message without class prefix.
+   * \warning Always throws `std::runtime_error`.
+   */
+  void ErrorMessage(std::string_view message) const;
+};
+} // namespace OpenSMOKEpp
 
 #endif // OpenSMOKEpp_DictionaryManager_H

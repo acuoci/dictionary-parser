@@ -34,111 +34,112 @@
 \*-----------------------------------------------------------------------*/
 
 #ifndef OpenSMOKEpp_DictionaryFile_H
-#define	OpenSMOKEpp_DictionaryFile_H
+#define OpenSMOKEpp_DictionaryFile_H
 
 #include <iosfwd>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "DictionaryInputFile.h"
 #include "Dictionary.h"
+#include "DictionaryInputFile.h"
 
-namespace OpenSMOKEpp
-{
-	/**
-	 * \brief Parses and validates one raw dictionary block.
-	 *
-	 * `DictionaryFile` receives the preprocessed physical lines belonging to a
-	 * single dictionary block, validates block syntax, compacts multiline
-	 * keyword entries, and transfers keyword/value data into a `Dictionary`.
-	 */
-	class DictionaryFile
-	{
-		public:
-			/**
-			 * \brief Sets the source file name for diagnostics.
-			 *
-			 * \param[in] file_name File name or path from which this dictionary
-			 * block was extracted.
-			 */
-			void SetFileName(const std::string file_name) { file_name_ = file_name; }
+namespace OpenSMOKEpp {
+/**
+ * \brief Parses and validates one raw dictionary block.
+ *
+ * `DictionaryFile` receives the preprocessed physical lines belonging to a
+ * single dictionary block, validates block syntax, compacts multiline
+ * keyword entries, and transfers keyword/value data into a `Dictionary`.
+ */
+class DictionaryFile {
+public:
+  /**
+   * \brief Sets the source file name for diagnostics.
+   *
+   * \param[in] file_name File name or path from which this dictionary
+   * block was extracted.
+   */
+  void SetFileName(const std::string_view file_name) { file_name_ = file_name; }
 
-			/**
-			 * \brief Sets the 1-based source line where the dictionary block begins.
-			 *
-			 * \param[in] index_first_line Original file line containing
-			 * `Dictionary <name>`.
-			 * \note This function is `noexcept`.
-			 */
-			void SetFirstLine(const unsigned int index_first_line) noexcept { index_first_line_ = index_first_line; }
+  /**
+   * \brief Sets the 1-based source line where the dictionary block begins.
+   *
+   * \param[in] index_first_line Original file line containing
+   * `Dictionary <name>`.
+   * \note This function is `noexcept`.
+   */
+  void SetFirstLine(const unsigned int index_first_line) noexcept {
+    index_first_line_ = index_first_line;
+  }
 
-			/**
-			 * \brief Appends a preprocessed physical line to this block.
-			 *
-			 * \param[in] line Line after comment stripping and tab normalization.
-			 */
-			void AddLine(const std::string line) { lines_.push_back(line); }
+  /**
+   * \brief Appends a preprocessed physical line to this block.
+   *
+   * \param[in] line Line after comment stripping and tab normalization.
+   */
+  void AddLine(const std::string_view line) { lines_.emplace_back(line); }
 
-			/**
-			 * \brief Validates block syntax and compacts keyword entries.
-			 *
-			 * \warning Throws `std::runtime_error` if the dictionary name, curly
-			 * braces, keyword markers, semicolon terminators, or nested-block
-			 * structure are invalid.
-			 * \note Multiline keyword values are joined until the next `@` marker.
-			 */
-			void Analyze();
+  /**
+   * \brief Validates block syntax and compacts keyword entries.
+   *
+   * \warning Throws `std::runtime_error` if the dictionary name, curly
+   * braces, keyword markers, semicolon terminators, or nested-block
+   * structure are invalid.
+   * \note Multiline keyword values are joined until the next `@` marker.
+   */
+  void Analyze();
 
-			/**
-			 * \brief Moves parsed keyword data into a dictionary object.
-			 *
-			 * \param[out] dictionary Destination dictionary receiving name,
-			 * source-file name, keywords, options, and source line ranges.
-			 * \warning Throws `std::runtime_error` if duplicate keywords are found
-			 * in this dictionary block.
-			 */
-			void Transfer(Dictionary& dictionary);
+  /**
+   * \brief Moves parsed keyword data into a dictionary object.
+   *
+   * \param[out] dictionary Destination dictionary receiving name,
+   * source-file name, keywords, options, and source line ranges.
+   * \warning Throws `std::runtime_error` if duplicate keywords are found
+   * in this dictionary block.
+   */
+  void Transfer(Dictionary &dictionary);
 
-			/**
-			 * \brief Writes a diagnostic representation of this parsed block.
-			 *
-			 * \param[out] fout Stream receiving compacted dictionary data.
-			 */
-			void Write(std::ostream& fout) const;
+  /**
+   * \brief Writes a diagnostic representation of this parsed block.
+   *
+   * \param[out] fout Stream receiving compacted dictionary data.
+   */
+  void Write(std::ostream &fout) const;
 
-		private:
-			/** \brief Parsed dictionary name. */
-			std::string name_;
+private:
+  /** \brief Parsed dictionary name. */
+  std::string name_;
 
-			/** \brief Source file name used in diagnostics. */
-			std::string file_name_;
+  /** \brief Source file name used in diagnostics. */
+  std::string file_name_;
 
-			/** \brief 1-based original line index of the dictionary declaration. */
-			unsigned int index_first_line_;
+  /** \brief 1-based original line index of the dictionary declaration. */
+  unsigned int index_first_line_;
 
-			/** \brief Preprocessed physical lines belonging to this block. */
-			std::vector<std::string> lines_;
+  /** \brief Preprocessed physical lines belonging to this block. */
+  std::vector<std::string> lines_;
 
-			/** \brief Nonblank lines between the opening and closing braces. */
-			std::vector<std::string> good_lines_;
+  /** \brief Nonblank lines between the opening and closing braces. */
+  std::vector<std::string> good_lines_;
 
-			/** \brief One compacted logical keyword entry per `@` marker. */
-			std::vector<std::string> extended_lines_;
+  /** \brief One compacted logical keyword entry per `@` marker. */
+  std::vector<std::string> extended_lines_;
 
-			/** \brief 1-based original line indices for `good_lines_`. */
-			std::vector<unsigned int> indices_of_good_lines_;
+  /** \brief 1-based original line indices for `good_lines_`. */
+  std::vector<unsigned int> indices_of_good_lines_;
 
-			/** \brief Mapping from compacted entries to local `good_lines_` offsets. */
-			std::vector<unsigned int> i_start_;
+  /** \brief Mapping from compacted entries to local `good_lines_` offsets. */
+  std::vector<unsigned int> i_start_;
 
-			/**
-			 * \brief Raises a dictionary-block parsing error.
-			 *
-			 * \param[in] message Diagnostic message without block context.
-			 * \warning Always throws `std::runtime_error`.
-			 */
-			void ErrorMessage(const std::string message) const;
-	};
-}
+  /**
+   * \brief Raises a dictionary-block parsing error.
+   *
+   * \param[in] message Diagnostic message without block context.
+   * \warning Always throws `std::runtime_error`.
+   */
+  void ErrorMessage(std::string_view message) const;
+};
+} // namespace OpenSMOKEpp
 
 #endif // OpenSMOKEpp_DictionaryFile_H
