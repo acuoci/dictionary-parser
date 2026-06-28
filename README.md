@@ -1,8 +1,8 @@
-# OpenSMOKEpp
+# OpenSMOKE++ Dictionary Parser
 
 **A standalone, high-performance, modern C++ library for parsing and processing structured input files according to rigorous dictionary syntax rules.**
 
-OpenSMOKEpp provides a compact parser for `Dictionary ... { ... }` input files with keyword-based options, multiline entries, comments, source-line diagnostics, and optional grammar validation. The parser core is fully decoupled from Boost, Eigen, and the wider OpenSMOKE++ framework.
+OpenSMOKE++ Dictionary Parser provides a compact parser for `Dictionary ... { ... }` input files with keyword-based options, multiline entries, comments, source-line diagnostics, and optional grammar validation. The parser core is fully decoupled from Boost, Eigen, and the wider OpenSMOKE++ framework.
 
 ## Highlights
 
