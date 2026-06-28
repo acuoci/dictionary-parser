@@ -41,421 +41,407 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
+#include <unordered_set>
 
-namespace OpenSMOKEpp
-{
-	void DictionaryGrammar::ErrorMessage(const std::string message) const
-	{
-		throw std::runtime_error("Grammar defined in file " + file_name_.filename().string() + ": " + message);
-	}
-
-	void DictionaryGrammar::DefineRules()
-	{
-		ErrorMessage("No grammar rules were defined by the user.");
-	}
-
-	void DictionaryGrammar::UserDefined()
-	{
-		keywords_.clear();
-		list_of_keywords_names_.clear();
-		number_of_keywords_ = 0;
-
-		DefineRules();
-
-		// Number of keywords
-		number_of_keywords_ = static_cast<unsigned int>(keywords_.size());
-		
-		// List of keywords names
-		list_of_keywords_names_.resize(number_of_keywords_);
-		for (unsigned int i=0;i<number_of_keywords_;i++)
-			list_of_keywords_names_[i] = keywords_[i].name();
-
-		// Check the grammar
-		Check();
-	}
-
-	void DictionaryGrammar::AddKeyWord(const DictionaryKeyWord& keyword)
-	{
-		keywords_.push_back(keyword);
-	}
-
-	void DictionaryGrammar::ReadFromFile(const std::string file_name)
-	{
-		file_name_ = std::filesystem::path(file_name);
-		keywords_.clear();
-		list_of_keywords_names_.clear();
-		number_of_keywords_ = 0;
-
-		std::ifstream fInput(file_name_);
-		if (!fInput.is_open())
-			throw std::runtime_error("Unable to open grammar file: " + file_name_.string());
-
-		// Reads the lines
-		std::vector<std::string> lines;
-		std::string line;
-		while (std::getline(fInput, line))
-		{
-			lines.push_back(line);
-		}
-		if (fInput.bad())
-			throw std::runtime_error("I/O error while reading grammar file: " + file_name_.string());
-		
-		// Count number of keywords
-		std::vector<unsigned int> line_keywords;
-		for(unsigned int i=0;i<lines.size();i++)
-		{
-			for (std::size_t j = 0; j < Lexer::count_substring_case_insensitive(lines[i], "keyword:"); ++j)
-				line_keywords.push_back(i+1);
-		}
-		number_of_keywords_ = static_cast<unsigned int>(line_keywords.size());
-
-		// Reads the grammar rules
-		keywords_.resize(number_of_keywords_);
-		for(unsigned int i=0;i<number_of_keywords_;i++)
-		{
-			std::vector<std::string> block_of_lines;
-			block_of_lines.reserve(7);
-			if (line_keywords[i] - 1 + 7 > lines.size())
-				ErrorMessage("A keyword block is truncated. Each keyword definition must contain seven lines.");
-
-			for(unsigned int j=line_keywords[i]-1;j<line_keywords[i]-1+7;j++)
-				block_of_lines.push_back(lines[j]);
-			DictionaryKeyWord tmp(block_of_lines);
-			keywords_[i] = tmp;
-		}
-
-		// List of keywords names
-		list_of_keywords_names_.resize(number_of_keywords_);
-		for (unsigned int i=0;i<number_of_keywords_;i++)
-			list_of_keywords_names_[i] = keywords_[i].name();
-
-		// Check the grammar
-		Check();
-	}
-
-	void DictionaryGrammar::Check()
-	{
-		// Check if one option is specified more than once
-		for(unsigned int i=0;i<number_of_keywords_;i++)
-			for(unsigned int j=i+1;j<number_of_keywords_;j++)
-				if ( keywords_[i].name() == keywords_[j].name() )
-					ErrorMessage("The following keyword is defined more than once: " + keywords_[i].name() );
-
-		// Check the existence of additional keywords
-		CheckExistence();
-
-		// Check the relationships between compulsory keywords
-		for(unsigned int j=0;j<number_of_keywords_;j++)
-		{
-			if (keywords_[j].is_compulsory() == true)
-			{	
-				if (keywords_[j].compulsory_alternatives().size() != 0)
-				{
-					for(unsigned int k=0;k<keywords_[j].compulsory_alternatives().size();k++)
-						for(unsigned int i=0;i<number_of_keywords_;i++)
-							if (keywords_[i].name() == keywords_[j].compulsory_alternatives()[k])
-							{
-								if (keywords_[i].is_compulsory() == false)
-									ErrorMessage("Conflicting compulsory options between the following keywords: " + keywords_[j].name() + " and " + keywords_[i].name());
-									
-								bool found = false; 
-								for(unsigned int kk=0;kk<keywords_[i].compulsory_alternatives().size();kk++)
-									if (keywords_[i].compulsory_alternatives()[kk] == keywords_[j].name())
-									{
-										found = true;
-										break;
-									}
-								if (found==false)
-									ErrorMessage("Inconsistent compulsory options between the following keywords: " + keywords_[j].name() + " and " + keywords_[i].name());
-							}
-				}
-			}
-		}	
-
-		// Check the relationships between conflicting keywords
-		for(unsigned int j=0;j<number_of_keywords_;j++)
-		{
-			if (keywords_[j].conflicting_keywords().size() != 0)
-			{
-				for(unsigned int k=0;k<keywords_[j].conflicting_keywords().size();k++)
-					for(unsigned int i=0;i<number_of_keywords_;i++)
-						if (keywords_[i].name() == keywords_[j].conflicting_keywords()[k])
-						{									
-							bool found = false; 
-							for(unsigned int kk=0;kk<keywords_[i].conflicting_keywords().size();kk++)
-								if (keywords_[i].conflicting_keywords()[kk] == keywords_[j].name())
-								{
-									found = true;
-									break;
-								}
-							if (found==false)
-								ErrorMessage("Inconsistent conflicting options between the following keywords: " + keywords_[j].name() + " and " + keywords_[i].name());
-						}
-			}
-		}	
-
-	}
-
-	void DictionaryGrammar::ShortSummary(std::ostream& fout) const
-	{
-		fout << "Grammar defined in file: " << file_name_.filename() << std::endl;
-		fout << "-----------------------------------------------------------------------------------------------------" << std::endl;
-		fout << std::endl;
-		for(unsigned int i=0;i<number_of_keywords_;i++)
-		{
-			keywords_[i].ShortSummary(fout);
-			fout << std::endl;
-		}
-		fout << "-----------------------------------------------------------------------------------------------------" << std::endl;
-	}
-
-	bool DictionaryGrammar::CheckForHelpKeyWord(std::vector<std::string>& list_of_keywords)
-	{
-		for (unsigned int i = 0; i < list_of_keywords.size(); i++)
-			if (list_of_keywords[i] == "@Help")
-			{
-				ShowListAvailableKeywords();
-				return true;
-			}
-
-		return false;
-	}
-
-	bool DictionaryGrammar::CheckUndefinedKeyWords(std::vector<std::string>& list_of_keywords)
-	{
-		bool global_error = true;
-
-		for (unsigned int i = 0; i < list_of_keywords.size(); i++)
-			if (list_of_keywords[i] == "@Help")
-			{
-				ShowListAvailableKeywords();
-				global_error = false;
-				return global_error;
-			}
-
-		for(unsigned int i=0;i<list_of_keywords.size();i++)
-		{
-			bool is_defined = false;
-			for(unsigned int j=0;j<number_of_keywords_;j++)
-				if (list_of_keywords[i] == keywords_[j].name())
-				{
-					is_defined = true;
-					break;
-				}
-			
-			if (is_defined == false)
-			{
-				global_error = false;
-				std::cout << "The " << list_of_keywords[i] << " type is not recognized as a keyword." << std::endl;
-
-				ShowListAvailableKeywords();
-			}
-		}
-		return global_error;
-	}
-
-	void DictionaryGrammar::ShowListAvailableKeywords()
-	{
-		std::cout << std::endl;
-		std::cout << "----------------------------------------------------------------------------------" << std::endl;
-		std::cout << "List of available options in Dictionary " << name_ << std::endl;
-		std::cout << "----------------------------------------------------------------------------------" << std::endl;
-		for (unsigned int j = 0; j < number_of_keywords_; j++)
-		{
-			std::cout << std::setw(45) << std::left << keywords_[j].name();
-			std::cout << std::setw(20) << std::left << keywords_[j].type_ascii();
-			std::cout << std::left << keywords_[j].comment_short();
-			std::cout << std::endl;
-		}
-		std::cout << "----------------------------------------------------------------------------------" << std::endl;
-		std::cout << std::endl;
-	}
-
-	bool DictionaryGrammar::CheckCompulsoryKeyWords(std::vector<std::string>& list_of_keywords)
-	{
-		bool global_error = true;
-		for(unsigned int j=0;j<number_of_keywords_;j++)
-		{
-			if (keywords_[j].is_compulsory() == true)
-			{	
-				if (keywords_[j].compulsory_alternatives().size() == 0)
-				{
-					bool is_defined = false;
-					for(unsigned int i=0;i<list_of_keywords.size();i++)
-						if (list_of_keywords[i] == keywords_[j].name())
-						{
-							is_defined = true;
-							break;
-						}
-
-					if (is_defined == false)
-					{
-						global_error = false;
-						std::cout << "The compulsory keyword " << keywords_[j].name() << " is not defined." << std::endl;
-					}
-				}
-				else
-				{
-					unsigned int number_of_alternatives_found = 0;
-					for(unsigned int i=0;i<list_of_keywords.size();i++)
-						if (list_of_keywords[i] == keywords_[j].name())
-						{
-							number_of_alternatives_found++;
-							break;
-						}
-					
-					for(unsigned int k=0;k<keywords_[j].compulsory_alternatives().size();k++)
-						for(unsigned int i=0;i<list_of_keywords.size();i++)
-								if (list_of_keywords[i] == keywords_[j].compulsory_alternatives()[k])
-								{
-									number_of_alternatives_found++;
-									break;
-								}
-
-					if (number_of_alternatives_found == 0)	
-					{
-						global_error = false;
-						std::cout << "Neither the compulsory keyword " << keywords_[j].name() << ", neither its alternatives, are defined." << std::endl;
-						return global_error;
-					}
-					else if (number_of_alternatives_found > 1)	
-					{
-						global_error = false;
-						std::cout << "The compulsory keyword " << keywords_[j].name() << ", or one of its alternatives, are defined more than once." << std::endl;
-						return global_error;
-					}
-				}
-			}
-		}
-			
-		return global_error;
-	}
-
-	bool DictionaryGrammar::CheckRequiredKeyWords(std::vector<std::string>& list_of_keywords)
-	{
-		bool global_error = true;
-		for(unsigned int j=0;j<number_of_keywords_;j++)
-		{
-			// Check only the keywords requiring additional keywords
-			if (keywords_[j].required_keywords().size() != 0)
-			{
-				// Check if this keyword is used in the dictionary
-				std::vector<std::string>::iterator index = find (list_of_keywords.begin(), list_of_keywords.end(), keywords_[j].name());
-				if (index != list_of_keywords.end() )
-				{
-					// Loop over all the required keywords
-					for(unsigned int k=0;k<keywords_[j].required_keywords().size();k++)
-					{
-						bool is_defined = false;
-						std::vector<std::string>::iterator it = find (list_of_keywords.begin(), list_of_keywords.end(), keywords_[j].required_keywords()[k]);
-						if (it != list_of_keywords.end() )
-							is_defined = true;
-
-						if (is_defined == false)
-						{
-							global_error = false;
-							std::cout << "The " << keywords_[j].name() << " keyword requires the " << keywords_[j].required_keywords()[k] << " keyword, which is not present in the dictionary." << std::endl;
-						}
-					}
-				}
-			}
-		}
-		return global_error;
-	}
-
-	bool DictionaryGrammar::CheckConflictingKeyWords(std::vector<std::string>& list_of_keywords)
-	{
-		bool global_error = true;
-		for(unsigned int j=0;j<number_of_keywords_;j++)
-		{
-			// Check only the keywords with conflicting_keywords option enabled on
-			if (keywords_[j].conflicting_keywords().size() != 0)
-			{
-				// Check if this keyword is used in the dictionary
-				std::vector<std::string>::iterator index = find (list_of_keywords.begin(), list_of_keywords.end(), keywords_[j].name());
-				if (index != list_of_keywords.end() )
-				{
-					// Loop over all the conflicting keywords
-					for(unsigned int k=0;k<keywords_[j].conflicting_keywords().size();k++)
-					{
-						bool is_found = false;
-						std::vector<std::string>::iterator it = find (list_of_keywords.begin(), list_of_keywords.end(), keywords_[j].conflicting_keywords()[k]);
-						if (it != list_of_keywords.end() )
-							is_found = true;
-
-						if (is_found == true)
-						{
-							global_error = false;
-							std::cout << "The " << keywords_[j].name() << " and the " << keywords_[j].conflicting_keywords()[k] << " keywords are used together, but they are mutually exclusive." << std::endl;
-						}
-					}
-				}
-			}
-		}
-
-		return global_error;
-	}
-
-	void DictionaryGrammar::CheckExistence()
-	{
-		for(unsigned int j=0;j<number_of_keywords_;j++)
-		{
-			// Compulsory alternatives
-			if (keywords_[j].compulsory_alternatives().size() != 0)
-			{
-				for(unsigned int k=0;k<keywords_[j].compulsory_alternatives().size();k++)
-				{
-					bool is_found = false;
-					std::vector<std::string>::iterator it = find (list_of_keywords_names_.begin(), list_of_keywords_names_.end(), keywords_[j].compulsory_alternatives()[k]);
-					if (it != list_of_keywords_names_.end() )
-						is_found = true;
-					
-					if (is_found ==false)
-						ErrorMessage("The undefined " + keywords_[j].compulsory_alternatives()[k] + " keyword is present inside the definition of the " + keywords_[j].name() + " keyword");
-				}
-			}
-
-			// Required keywords
-			if (keywords_[j].required_keywords().size() != 0)
-			{
-				for(unsigned int k=0;k<keywords_[j].required_keywords().size();k++)
-				{
-					bool is_found = false;
-					std::vector<std::string>::iterator it = find (list_of_keywords_names_.begin(), list_of_keywords_names_.end(), keywords_[j].required_keywords()[k]);
-					if (it != list_of_keywords_names_.end() )
-						is_found = true;
-					
-					if (is_found ==false)
-						ErrorMessage("The undefined " + keywords_[j].required_keywords()[k] + " keyword is present inside the definition of the " + keywords_[j].name() + " keyword");
-				}
-			}
-
-			// Conflicting keywords
-			if (keywords_[j].conflicting_keywords().size() != 0)
-			{
-				for(unsigned int k=0;k<keywords_[j].conflicting_keywords().size();k++)
-				{
-					bool is_found = false;
-					std::vector<std::string>::iterator it = find (list_of_keywords_names_.begin(), list_of_keywords_names_.end(), keywords_[j].conflicting_keywords()[k]);
-					if (it != list_of_keywords_names_.end() )
-						is_found = true;
-					
-					if (is_found ==false)
-						ErrorMessage("The undefined " + keywords_[j].conflicting_keywords()[k] + " keyword is present inside the definition of the " + keywords_[j].name() + " keyword");
-				}
-			}
-		}
-	}
-
-	bool DictionaryGrammar::CheckType(const std::string keyword_name, const DictionaryKeyWordTypes expected_type)
-	{
-		std::vector<std::string>::iterator it = find (list_of_keywords_names_.begin(), list_of_keywords_names_.end(), keyword_name);
-		if (it == list_of_keywords_names_.end() )
-			return false;
-		else
-		{
-			size_t index = it-list_of_keywords_names_.begin();
-			return (keywords_[index].type() == expected_type);
-		}
-	}
+namespace OpenSMOKEpp {
+void DictionaryGrammar::ErrorMessage(const std::string message) const {
+  throw std::runtime_error("Grammar defined in file " +
+                           file_name_.filename().string() + ": " + message);
 }
+
+void DictionaryGrammar::DefineRules() {
+  ErrorMessage("No grammar rules were defined by the user.");
+}
+
+void DictionaryGrammar::UserDefined() {
+  keywords_.clear();
+  list_of_keywords_names_.clear();
+  number_of_keywords_ = 0;
+
+  DefineRules();
+
+  // Number of keywords
+  number_of_keywords_ = static_cast<unsigned int>(keywords_.size());
+
+  // List of keywords names
+  list_of_keywords_names_.resize(number_of_keywords_);
+  for (unsigned int i = 0; i < number_of_keywords_; i++)
+    list_of_keywords_names_[i] = keywords_[i].name();
+
+  // Check the grammar
+  Check();
+}
+
+void DictionaryGrammar::AddKeyWord(const DictionaryKeyWord &keyword) {
+  keywords_.push_back(keyword);
+}
+
+void DictionaryGrammar::ReadFromFile(const std::string file_name) {
+  file_name_ = std::filesystem::path(file_name);
+  keywords_.clear();
+  list_of_keywords_names_.clear();
+  number_of_keywords_ = 0;
+
+  std::ifstream fInput(file_name_);
+  if (!fInput.is_open())
+    throw std::runtime_error("Unable to open grammar file: " +
+                             file_name_.string());
+
+  // Reads the lines
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(fInput, line)) {
+    lines.push_back(line);
+  }
+  if (fInput.bad())
+    throw std::runtime_error("I/O error while reading grammar file: " +
+                             file_name_.string());
+
+  // Count number of keywords
+  std::vector<unsigned int> line_keywords;
+  for (unsigned int i = 0; i < lines.size(); i++) {
+    for (std::size_t j = 0;
+         j < Lexer::count_substring_case_insensitive(lines[i], "keyword:"); ++j)
+      line_keywords.push_back(i + 1);
+  }
+  number_of_keywords_ = static_cast<unsigned int>(line_keywords.size());
+
+  // Reads the grammar rules
+  keywords_.resize(number_of_keywords_);
+  for (unsigned int i = 0; i < number_of_keywords_; i++) {
+    std::vector<std::string> block_of_lines;
+    block_of_lines.reserve(7);
+    if (line_keywords[i] - 1 + 7 > lines.size())
+      ErrorMessage("A keyword block is truncated. Each keyword definition must "
+                   "contain seven lines.");
+
+    for (unsigned int j = line_keywords[i] - 1; j < line_keywords[i] - 1 + 7;
+         j++)
+      block_of_lines.push_back(lines[j]);
+    DictionaryKeyWord tmp(block_of_lines);
+    keywords_[i] = tmp;
+  }
+
+  // List of keywords names
+  list_of_keywords_names_.resize(number_of_keywords_);
+  for (unsigned int i = 0; i < number_of_keywords_; i++)
+    list_of_keywords_names_[i] = keywords_[i].name();
+
+  // Check the grammar
+  Check();
+}
+
+void DictionaryGrammar::Check() {
+  // Check if one option is specified more than once
+  for (unsigned int i = 0; i < number_of_keywords_; i++)
+    for (unsigned int j = i + 1; j < number_of_keywords_; j++)
+      if (keywords_[i].name() == keywords_[j].name())
+        ErrorMessage("The following keyword is defined more than once: " +
+                     keywords_[i].name());
+
+  // Check the existence of additional keywords
+  CheckExistence();
+
+  // Check the relationships between compulsory keywords
+  for (unsigned int j = 0; j < number_of_keywords_; j++) {
+    if (keywords_[j].is_compulsory() == true) {
+      if (keywords_[j].compulsory_alternatives().size() != 0) {
+        for (unsigned int k = 0;
+             k < keywords_[j].compulsory_alternatives().size(); k++)
+          for (unsigned int i = 0; i < number_of_keywords_; i++)
+            if (keywords_[i].name() ==
+                keywords_[j].compulsory_alternatives()[k]) {
+              if (keywords_[i].is_compulsory() == false)
+                ErrorMessage("Conflicting compulsory options between the "
+                             "following keywords: " +
+                             keywords_[j].name() + " and " +
+                             keywords_[i].name());
+
+              bool found = false;
+              for (unsigned int kk = 0;
+                   kk < keywords_[i].compulsory_alternatives().size(); kk++)
+                if (keywords_[i].compulsory_alternatives()[kk] ==
+                    keywords_[j].name()) {
+                  found = true;
+                  break;
+                }
+              if (found == false)
+                ErrorMessage("Inconsistent compulsory options between the "
+                             "following keywords: " +
+                             keywords_[j].name() + " and " +
+                             keywords_[i].name());
+            }
+      }
+    }
+  }
+
+  // Check the relationships between conflicting keywords
+  for (unsigned int j = 0; j < number_of_keywords_; j++) {
+    if (keywords_[j].conflicting_keywords().size() != 0) {
+      for (unsigned int k = 0; k < keywords_[j].conflicting_keywords().size();
+           k++)
+        for (unsigned int i = 0; i < number_of_keywords_; i++)
+          if (keywords_[i].name() == keywords_[j].conflicting_keywords()[k]) {
+            bool found = false;
+            for (unsigned int kk = 0;
+                 kk < keywords_[i].conflicting_keywords().size(); kk++)
+              if (keywords_[i].conflicting_keywords()[kk] ==
+                  keywords_[j].name()) {
+                found = true;
+                break;
+              }
+            if (found == false)
+              ErrorMessage("Inconsistent conflicting options between the "
+                           "following keywords: " +
+                           keywords_[j].name() + " and " + keywords_[i].name());
+          }
+    }
+  }
+}
+
+void DictionaryGrammar::ShortSummary(std::ostream &fout) const {
+  fout << "Grammar defined in file: " << file_name_.filename() << std::endl;
+  fout << "--------------------------------------------------------------------"
+          "---------------------------------"
+       << std::endl;
+  fout << std::endl;
+  for (unsigned int i = 0; i < number_of_keywords_; i++) {
+    keywords_[i].ShortSummary(fout);
+    fout << std::endl;
+  }
+  fout << "--------------------------------------------------------------------"
+          "---------------------------------"
+       << std::endl;
+}
+
+bool DictionaryGrammar::CheckForHelpKeyWord(
+    std::vector<std::string> &list_of_keywords) {
+  for (unsigned int i = 0; i < list_of_keywords.size(); i++)
+    if (list_of_keywords[i] == "@Help") {
+      ShowListAvailableKeywords();
+      return true;
+    }
+
+  return false;
+}
+
+bool DictionaryGrammar::CheckUndefinedKeyWords(
+    std::vector<std::string> &list_of_keywords) {
+  bool global_error = true;
+
+  for (unsigned int i = 0; i < list_of_keywords.size(); i++)
+    if (list_of_keywords[i] == "@Help") {
+      ShowListAvailableKeywords();
+      global_error = false;
+      return global_error;
+    }
+
+  std::unordered_set<std::string_view> grammar_keywords;
+  grammar_keywords.reserve(list_of_keywords_names_.size());
+  for (const auto &keyword : list_of_keywords_names_)
+    grammar_keywords.insert(keyword);
+
+  for (unsigned int i = 0; i < list_of_keywords.size(); i++) {
+    if (!grammar_keywords.contains(list_of_keywords[i])) {
+      global_error = false;
+      std::cout << "The " << list_of_keywords[i]
+                << " type is not recognized as a keyword." << std::endl;
+
+      ShowListAvailableKeywords();
+    }
+  }
+  return global_error;
+}
+
+void DictionaryGrammar::ShowListAvailableKeywords() {
+  std::cout << std::endl;
+  std::cout << "---------------------------------------------------------------"
+               "-------------------"
+            << std::endl;
+  std::cout << "List of available options in Dictionary " << name_ << std::endl;
+  std::cout << "---------------------------------------------------------------"
+               "-------------------"
+            << std::endl;
+  for (unsigned int j = 0; j < number_of_keywords_; j++) {
+    std::cout << std::setw(45) << std::left << keywords_[j].name();
+    std::cout << std::setw(20) << std::left << keywords_[j].type_ascii();
+    std::cout << std::left << keywords_[j].comment_short();
+    std::cout << std::endl;
+  }
+  std::cout << "---------------------------------------------------------------"
+               "-------------------"
+            << std::endl;
+  std::cout << std::endl;
+}
+
+bool DictionaryGrammar::CheckCompulsoryKeyWords(
+    std::vector<std::string> &list_of_keywords) {
+  bool global_error = true;
+  std::unordered_set<std::string_view> dictionary_keywords;
+  dictionary_keywords.reserve(list_of_keywords.size());
+  for (const auto &keyword : list_of_keywords)
+    dictionary_keywords.insert(keyword);
+
+  for (unsigned int j = 0; j < number_of_keywords_; j++) {
+    if (keywords_[j].is_compulsory() == true) {
+      if (keywords_[j].compulsory_alternatives().size() == 0) {
+        if (!dictionary_keywords.contains(keywords_[j].name())) {
+          global_error = false;
+          std::cout << "The compulsory keyword " << keywords_[j].name()
+                    << " is not defined." << std::endl;
+        }
+      } else {
+        unsigned int number_of_alternatives_found = 0;
+        if (dictionary_keywords.contains(keywords_[j].name()))
+          number_of_alternatives_found++;
+
+        for (unsigned int k = 0;
+             k < keywords_[j].compulsory_alternatives().size(); k++)
+          if (dictionary_keywords.contains(
+                  keywords_[j].compulsory_alternatives()[k]))
+            number_of_alternatives_found++;
+
+        if (number_of_alternatives_found == 0) {
+          global_error = false;
+          std::cout << "Neither the compulsory keyword " << keywords_[j].name()
+                    << ", neither its alternatives, are defined." << std::endl;
+          return global_error;
+        } else if (number_of_alternatives_found > 1) {
+          global_error = false;
+          std::cout
+              << "The compulsory keyword " << keywords_[j].name()
+              << ", or one of its alternatives, are defined more than once."
+              << std::endl;
+          return global_error;
+        }
+      }
+    }
+  }
+
+  return global_error;
+}
+
+bool DictionaryGrammar::CheckRequiredKeyWords(
+    std::vector<std::string> &list_of_keywords) {
+  bool global_error = true;
+  std::unordered_set<std::string_view> dictionary_keywords;
+  dictionary_keywords.reserve(list_of_keywords.size());
+  for (const auto &keyword : list_of_keywords)
+    dictionary_keywords.insert(keyword);
+
+  for (unsigned int j = 0; j < number_of_keywords_; j++) {
+    // Check only the keywords requiring additional keywords
+    if (keywords_[j].required_keywords().size() != 0) {
+      // Check if this keyword is used in the dictionary
+      if (dictionary_keywords.contains(keywords_[j].name())) {
+        // Loop over all the required keywords
+        for (unsigned int k = 0; k < keywords_[j].required_keywords().size();
+             k++) {
+          if (!dictionary_keywords.contains(
+                  keywords_[j].required_keywords()[k])) {
+            global_error = false;
+            std::cout << "The " << keywords_[j].name()
+                      << " keyword requires the "
+                      << keywords_[j].required_keywords()[k]
+                      << " keyword, which is not present in the dictionary."
+                      << std::endl;
+          }
+        }
+      }
+    }
+  }
+  return global_error;
+}
+
+bool DictionaryGrammar::CheckConflictingKeyWords(
+    std::vector<std::string> &list_of_keywords) {
+  bool global_error = true;
+  std::unordered_set<std::string_view> dictionary_keywords;
+  dictionary_keywords.reserve(list_of_keywords.size());
+  for (const auto &keyword : list_of_keywords)
+    dictionary_keywords.insert(keyword);
+
+  for (unsigned int j = 0; j < number_of_keywords_; j++) {
+    // Check only the keywords with conflicting_keywords option enabled on
+    if (keywords_[j].conflicting_keywords().size() != 0) {
+      // Check if this keyword is used in the dictionary
+      if (dictionary_keywords.contains(keywords_[j].name())) {
+        // Loop over all the conflicting keywords
+        for (unsigned int k = 0; k < keywords_[j].conflicting_keywords().size();
+             k++) {
+          if (dictionary_keywords.contains(
+                  keywords_[j].conflicting_keywords()[k])) {
+            global_error = false;
+            std::cout << "The " << keywords_[j].name() << " and the "
+                      << keywords_[j].conflicting_keywords()[k]
+                      << " keywords are used together, but they are mutually "
+                         "exclusive."
+                      << std::endl;
+          }
+        }
+      }
+    }
+  }
+
+  return global_error;
+}
+
+void DictionaryGrammar::CheckExistence() {
+  std::unordered_set<std::string_view> grammar_keywords;
+  grammar_keywords.reserve(list_of_keywords_names_.size());
+  for (const auto &keyword : list_of_keywords_names_)
+    grammar_keywords.insert(keyword);
+
+  for (unsigned int j = 0; j < number_of_keywords_; j++) {
+    // Compulsory alternatives
+    if (keywords_[j].compulsory_alternatives().size() != 0) {
+      for (unsigned int k = 0;
+           k < keywords_[j].compulsory_alternatives().size(); k++) {
+        if (!grammar_keywords.contains(
+                keywords_[j].compulsory_alternatives()[k]))
+          ErrorMessage("The undefined " +
+                       keywords_[j].compulsory_alternatives()[k] +
+                       " keyword is present inside the definition of the " +
+                       keywords_[j].name() + " keyword");
+      }
+    }
+
+    // Required keywords
+    if (keywords_[j].required_keywords().size() != 0) {
+      for (unsigned int k = 0; k < keywords_[j].required_keywords().size();
+           k++) {
+        if (!grammar_keywords.contains(keywords_[j].required_keywords()[k]))
+          ErrorMessage("The undefined " + keywords_[j].required_keywords()[k] +
+                       " keyword is present inside the definition of the " +
+                       keywords_[j].name() + " keyword");
+      }
+    }
+
+    // Conflicting keywords
+    if (keywords_[j].conflicting_keywords().size() != 0) {
+      for (unsigned int k = 0; k < keywords_[j].conflicting_keywords().size();
+           k++) {
+        if (!grammar_keywords.contains(keywords_[j].conflicting_keywords()[k]))
+          ErrorMessage("The undefined " +
+                       keywords_[j].conflicting_keywords()[k] +
+                       " keyword is present inside the definition of the " +
+                       keywords_[j].name() + " keyword");
+      }
+    }
+  }
+}
+
+bool DictionaryGrammar::CheckType(const std::string keyword_name,
+                                  const DictionaryKeyWordTypes expected_type) {
+  std::vector<std::string>::iterator it =
+      find(list_of_keywords_names_.begin(), list_of_keywords_names_.end(),
+           keyword_name);
+  if (it == list_of_keywords_names_.end())
+    return false;
+  else {
+    size_t index = it - list_of_keywords_names_.begin();
+    return (keywords_[index].type() == expected_type);
+  }
+}
+} // namespace OpenSMOKEpp
