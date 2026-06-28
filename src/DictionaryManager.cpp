@@ -52,17 +52,16 @@ void DictionaryManager::ReadDictionariesFromFile(std::string_view file_name) {
   const int number_of_block_lines =
       static_cast<int>(dict_file.clean_lines().size());
 
-  // Count number of dictionaries
-  unsigned int n_dictionaries = 0;
+  // Count dictionary declarations.
   std::vector<unsigned int> line_dictionaries;
   for (int i = 0; i < number_of_block_lines; i++) {
-    for (std::size_t j = 0; j < Lexer::count_substring_case_insensitive(
-                                    dict_file.clean_lines()[i], "Dictionary");
-         ++j) {
-      n_dictionaries++;
+    const auto tokens =
+        Lexer::split_whitespace_view(dict_file.clean_lines()[i]);
+    if (!tokens.empty() && tokens.front() == "Dictionary")
       line_dictionaries.push_back(i + 1);
-    }
   }
+  const unsigned int n_dictionaries =
+      static_cast<unsigned int>(line_dictionaries.size());
   line_dictionaries.push_back(number_of_block_lines + 1);
 
   if (n_dictionaries == 0) {

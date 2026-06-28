@@ -68,7 +68,7 @@ void DictionaryFile::Analyze() {
   // Recognize the name of the dictionary
   {
     lines_[0] = Lexer::trim_copy(lines_[0]);
-    const auto tokens = Lexer::split_whitespace(lines_[0]);
+    const auto tokens = Lexer::split_whitespace_view(lines_[0]);
     const std::size_t n = tokens.size();
 
     if (n != 2)
@@ -88,16 +88,25 @@ void DictionaryFile::Analyze() {
     unsigned int n_forward = 0;
     unsigned int n_backward = 0;
     for (unsigned int i = 0; i < lines_.size(); i++) {
-      const auto forward_count = Lexer::count_char(lines_[i], '{');
-      for (std::size_t j = 0; j < forward_count; ++j) {
+      const auto trimmed = Lexer::trim(lines_[i]);
+      const auto tokens = Lexer::split_whitespace_view(trimmed);
+      const bool single_left_brace = tokens.size() == 1 && tokens[0] == "{";
+      const bool single_right_brace = tokens.size() == 1 && tokens[0] == "}";
+
+      if (single_left_brace) {
         ++n_forward;
         i_forward.push_back(i);
       }
 
-      const auto backward_count = Lexer::count_char(lines_[i], '}');
-      for (std::size_t j = 0; j < backward_count; ++j) {
+      if (single_right_brace) {
         ++n_backward;
         i_backward.push_back(i);
+      }
+
+      if (!single_left_brace && !single_right_brace &&
+          (Lexer::contains_substring(trimmed, "{") ||
+           Lexer::contains_substring(trimmed, "}"))) {
+        ErrorMessage("Curly brackets must be specified as single-token lines.");
       }
     }
 
@@ -115,7 +124,7 @@ void DictionaryFile::Analyze() {
   // Check the curly braces
   {
     lines_[i_forward[0]] = Lexer::trim_copy(lines_[i_forward[0]]);
-    const auto tokens = Lexer::split_whitespace(lines_[i_forward[0]]);
+    const auto tokens = Lexer::split_whitespace_view(lines_[i_forward[0]]);
     const std::size_t n = tokens.size();
 
     if (n != 1 || tokens[0] != "{")
@@ -124,7 +133,7 @@ void DictionaryFile::Analyze() {
   // Check the curly braces
   {
     lines_[i_backward[0]] = Lexer::trim_copy(lines_[i_backward[0]]);
-    const auto tokens = Lexer::split_whitespace(lines_[i_backward[0]]);
+    const auto tokens = Lexer::split_whitespace_view(lines_[i_backward[0]]);
     const std::size_t n = tokens.size();
 
     if (n != 1 || tokens[0] != "}")
@@ -165,7 +174,8 @@ void DictionaryFile::Analyze() {
     unsigned int n_start = 0;
     i_start_.reserve(good_lines_.size() + 1);
     for (unsigned int i = 0; i < good_lines_.size(); i++) {
-      for (std::size_t j = 0; j < Lexer::count_char(good_lines_[i], '@'); ++j) {
+      const auto trimmed = Lexer::trim(good_lines_[i]);
+      if (!trimmed.empty() && trimmed.front() == '@') {
         n_start++;
         i_start_.push_back(i);
       }
@@ -273,7 +283,7 @@ void DictionaryFile::Transfer(Dictionary &dictionary) {
   std::vector<unsigned int> startingline(extended_lines_.size());
   std::vector<unsigned int> endingline(extended_lines_.size());
   for (unsigned int i = 0; i < extended_lines_.size(); i++) {
-    const auto tokens = Lexer::split_whitespace(extended_lines_[i]);
+    const auto tokens = Lexer::split_whitespace_view(extended_lines_[i]);
 
     if (tokens.empty())
       ErrorMessage("Internal parsing error: empty compacted keyword entry.");

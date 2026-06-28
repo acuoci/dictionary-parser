@@ -102,8 +102,8 @@ void DictionaryGrammar::ReadFromFile(std::string_view file_name) {
   // Count number of keywords
   std::vector<unsigned int> line_keywords;
   for (unsigned int i = 0; i < lines.size(); i++) {
-    for (std::size_t j = 0;
-         j < Lexer::count_substring_case_insensitive(lines[i], "keyword:"); ++j)
+    const auto tokens = Lexer::split_whitespace_view(lines[i]);
+    if (!tokens.empty() && tokens.front() == "keyword:")
       line_keywords.push_back(i + 1);
   }
   number_of_keywords_ = static_cast<unsigned int>(line_keywords.size());

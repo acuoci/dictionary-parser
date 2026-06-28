@@ -37,11 +37,14 @@
 #define OpenSMOKEpp_Dictionary_H
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <iosfwd>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "DictionaryGrammar.h"
@@ -56,6 +59,117 @@ namespace OpenSMOKEpp {
  */
 class Dictionary {
 public:
+  /** \brief Byte-backed boolean vector used to avoid `std::vector<bool>`
+   * proxies. */
+  using BoolVector = std::vector<std::uint8_t>;
+
+  /**
+   * \brief Describes the category of a structured parsing failure.
+   */
+  enum class ParseErrorCode {
+    /** \brief The requested keyword is not present. */
+    MissingKeyword,
+    /** \brief The requested keyword exists but does not match the expected
+       type. */
+    WrongType,
+    /** \brief The option has an invalid number of tokens. */
+    BadTokenCount,
+    /** \brief A token failed numeric conversion or finite-value validation. */
+    BadNumber
+  };
+
+  /**
+   * \brief Structured parse error returned by non-throwing read functions.
+   */
+  struct ParseError {
+    /** \brief Error category suitable for programmatic handling. */
+    ParseErrorCode code;
+
+    /** \brief Human-readable diagnostic including keyword context. */
+    std::string message;
+
+    /** \brief 1-based source line when available, otherwise 0. */
+    unsigned int line = 0;
+  };
+
+  /**
+   * \brief Minimal expected-like result for typed parser reads.
+   *
+   * \tparam T Value type returned on success.
+   */
+  template <typename T> class ParseResult {
+  public:
+    /**
+     * \brief Constructs a successful parse result.
+     *
+     * \param[in] value Parsed value.
+     * \return Result containing `value`.
+     */
+    [[nodiscard]] static auto Success(T value) -> ParseResult {
+      return ParseResult(std::move(value));
+    }
+
+    /**
+     * \brief Constructs a failed parse result.
+     *
+     * \param[in] error Structured parse error.
+     * \return Result containing `error`.
+     */
+    [[nodiscard]] static auto Failure(ParseError error) -> ParseResult {
+      return ParseResult(std::move(error));
+    }
+
+    /**
+     * \brief Reports whether the result contains a value.
+     *
+     * \return `true` on success, otherwise `false`.
+     * \note This function is `[[nodiscard]]` and `noexcept`.
+     */
+    [[nodiscard]] auto has_value() const noexcept -> bool {
+      return std::holds_alternative<T>(storage_);
+    }
+
+    /**
+     * \brief Reports whether the result contains a value.
+     *
+     * \return `true` on success, otherwise `false`.
+     * \note This function is `[[nodiscard]]` and `noexcept`.
+     */
+    [[nodiscard]] explicit operator bool() const noexcept {
+      return has_value();
+    }
+
+    /**
+     * \brief Returns the parsed value.
+     *
+     * \return Constant reference to the parsed value.
+     * \warning Calling this function on a failed result throws
+     * `std::bad_variant_access`.
+     * \note This function is `[[nodiscard]]`.
+     */
+    [[nodiscard]] auto value() const -> const T & {
+      return std::get<T>(storage_);
+    }
+
+    /**
+     * \brief Returns the parse error.
+     *
+     * \return Constant reference to the structured parse error.
+     * \warning Calling this function on a successful result throws
+     * `std::bad_variant_access`.
+     * \note This function is `[[nodiscard]]`.
+     */
+    [[nodiscard]] auto error() const -> const ParseError & {
+      return std::get<ParseError>(storage_);
+    }
+
+  private:
+    explicit ParseResult(T value) : storage_(std::move(value)) {}
+    explicit ParseResult(ParseError error) : storage_(std::move(error)) {}
+
+    std::variant<T, ParseError> storage_;
+  };
+
   /**
    * \brief Writes all keyword entries and source line ranges.
    *
@@ -104,8 +218,9 @@ public:
   /**
    * \brief Applies a hard-coded grammar and validates this dictionary.
    *
-   * \param[in,out] grammar Grammar object whose `DefineRules()` method is
-   * invoked before validation.
+   * \param[in] grammar Grammar object whose `DefineRules()` method is invoked
+   * before validation. Its base grammar state is restored before this function
+   * returns or rethrows.
    * \warning Throws `std::runtime_error` if grammar construction or
    * dictionary validation fails.
    */
@@ -139,6 +254,17 @@ public:
    * token count, or numeric conversion failure.
    */
   void ReadDouble(std::string_view option, double &value);
+
+  /**
+   * \brief Attempts to read one floating-point option without throwing.
+   *
+   * \param[in] option Keyword name including leading `@`.
+   * \return Successful result containing the parsed value, or a structured
+   * parse error with category, message, and source line.
+   * \note This function is `[[nodiscard]]`.
+   */
+  [[nodiscard]] auto TryReadDouble(std::string_view option)
+      -> ParseResult<double>;
 
   /**
    * \brief Reads one character option.
@@ -250,6 +376,16 @@ public:
    * \param[out] value Parsed boolean vector.
    * \warning Throws if the option is empty or any token is not one of
    * `true`, `false`, `on`, or `off`.
+   */
+  void ReadOption(std::string_view option, BoolVector &value);
+
+  /**
+   * \brief Reads a vector of boolean tokens into `std::vector<bool>`.
+   *
+   * \param[in] option Keyword name including leading `@`.
+   * \param[out] value Parsed boolean vector.
+   * \warning This overload is retained for source compatibility. Prefer the
+   * `BoolVector` overload to avoid `std::vector<bool>` proxy references.
    */
   void ReadOption(std::string_view option, std::vector<bool> &value);
 

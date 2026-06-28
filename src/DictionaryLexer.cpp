@@ -86,7 +86,7 @@ auto is_blank(const std::string_view text) noexcept -> bool {
   return trim(text).empty();
 }
 
-auto split_whitespace(const std::string_view text)
+auto split_whitespace_view(const std::string_view text)
     -> std::vector<std::string_view> {
   std::size_t token_count = 0;
   bool in_token = false;
@@ -114,6 +114,22 @@ auto split_whitespace(const std::string_view text)
   }
 
   return tokens;
+}
+
+auto split_whitespace_copy(const std::string_view text)
+    -> std::vector<std::string> {
+  const auto views = split_whitespace_view(text);
+  std::vector<std::string> tokens;
+  tokens.reserve(views.size());
+  std::transform(
+      views.begin(), views.end(), std::back_inserter(tokens),
+      [](const std::string_view token) { return std::string(token); });
+  return tokens;
+}
+
+auto split_whitespace(const std::string_view text)
+    -> std::vector<std::string_view> {
+  return split_whitespace_view(text);
 }
 
 auto count_char(const std::string_view text, const char value) noexcept

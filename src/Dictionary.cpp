@@ -51,7 +51,7 @@ namespace OpenSMOKEpp {
 namespace {
 [[nodiscard]] auto tokens_from(const std::string &text)
     -> std::vector<std::string_view> {
-  return Lexer::split_whitespace(text);
+  return Lexer::split_whitespace_view(text);
 }
 
 template <typename Number>
@@ -133,8 +133,15 @@ void Dictionary::Checks() {
 }
 
 void Dictionary::SetGrammar(DictionaryGrammar &grammar) {
-  grammar.UserDefined();
-  grammar_ = grammar;
+  const DictionaryGrammar original_state = grammar;
+  try {
+    grammar.UserDefined();
+    grammar_ = grammar;
+    static_cast<DictionaryGrammar &>(grammar) = original_state;
+  } catch (...) {
+    static_cast<DictionaryGrammar &>(grammar) = original_state;
+    throw;
+  }
   Checks();
 }
 
@@ -183,26 +190,62 @@ Dictionary::CheckOption(std::string_view name_of_keyword,
   }
 }
 
-void Dictionary::ReadDouble(std::string_view name_of_keyword, double &value) {
-  size_t index = CheckOption(name_of_keyword, SINGLE_DOUBLE);
+auto Dictionary::TryReadDouble(std::string_view name_of_keyword)
+    -> ParseResult<double> {
+  const auto it =
+      std::find(keywords_.begin(), keywords_.end(), name_of_keyword);
+  if (it == keywords_.end()) {
+    return ParseResult<double>::Failure(
+        ParseError{ParseErrorCode::MissingKeyword,
+                   "The required keyword (" + std::string(name_of_keyword) +
+                       ") is not present in the dictionary.",
+                   0});
+  }
 
+  const std::size_t index =
+      static_cast<std::size_t>(std::distance(keywords_.begin(), it));
+  if (grammar_.CheckType(name_of_keyword, SINGLE_DOUBLE) == false) {
+    return ParseResult<double>::Failure(
+        ParseError{ParseErrorCode::WrongType,
+                   "The required keyword (" + std::string(name_of_keyword) +
+                       ") is of different type.",
+                   starting_lines_[index]});
+  }
+
+  double value = 0.0;
   const auto tokens = tokens_from(options_[index]);
   if (tokens.size() != 1) {
-    std::stringstream line;
-    line << starting_lines_[index];
-    std::string message = "Error in the keyword at line : " + line.str() + "\n";
-    message += "The required keyword (" + std::string(name_of_keyword) +
-               ") requires a number (double).";
-    ErrorMessage(message);
+    return ParseResult<double>::Failure(
+        ParseError{ParseErrorCode::BadTokenCount,
+                   "The required keyword (" + std::string(name_of_keyword) +
+                       ") requires a number (double).",
+                   starting_lines_[index]});
   }
 
   if (!parse_number(tokens[0], value)) {
-    std::stringstream line;
-    line << starting_lines_[index];
-    std::string message = "Error in the keyword at line : " + line.str() + "\n";
-    message += "Failure in the numerical conversion.";
+    return ParseResult<double>::Failure(ParseError{
+        ParseErrorCode::BadNumber, "Failure in the numerical conversion.",
+        starting_lines_[index]});
+  }
+
+  return ParseResult<double>::Success(value);
+}
+
+void Dictionary::ReadDouble(std::string_view name_of_keyword, double &value) {
+  const auto result = TryReadDouble(name_of_keyword);
+  if (!result) {
+    const ParseError &error = result.error();
+    std::string message;
+    if (error.line != 0) {
+      std::stringstream line;
+      line << error.line;
+      message = "Error in the keyword at line : " + line.str() + "\n";
+    }
+    message += error.message;
     ErrorMessage(message);
   }
+
+  value = result.value();
 }
 
 void Dictionary::ReadMeasure(std::string_view name_of_keyword, double &value,
@@ -451,7 +494,7 @@ void Dictionary::ReadOption(std::string_view name_of_keyword,
 }
 
 void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<bool> &values) {
+                            BoolVector &values) {
   size_t index = CheckOption(name_of_keyword, VECTOR_BOOL);
 
   const auto tokens = tokens_from(options_[index]);
@@ -468,9 +511,9 @@ void Dictionary::ReadOption(std::string_view name_of_keyword,
   values.reserve(tokens.size());
   for (const auto token : tokens) {
     if (token == "true" || token == "on")
-      values.push_back(true);
+      values.push_back(1U);
     else if (token == "false" || token == "off")
-      values.push_back(false);
+      values.push_back(0U);
     else {
       std::stringstream line;
       line << starting_lines_[index];
@@ -480,6 +523,17 @@ void Dictionary::ReadOption(std::string_view name_of_keyword,
       ErrorMessage(message);
     }
   }
+}
+
+void Dictionary::ReadOption(std::string_view name_of_keyword,
+                            std::vector<bool> &values) {
+  BoolVector bytes;
+  ReadOption(name_of_keyword, bytes);
+
+  values.clear();
+  values.reserve(bytes.size());
+  std::transform(bytes.begin(), bytes.end(), std::back_inserter(values),
+                 [](const std::uint8_t value) { return value != 0U; });
 }
 
 void Dictionary::ReadOption(std::string_view name_of_keyword,
