@@ -38,14 +38,16 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <iostream>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
+#include <type_traits>
 
 namespace OpenSMOKEpp
-{	
+{
 	namespace
 	{
 		[[nodiscard]] auto tokens_from(const std::string& text) -> std::vector<std::string_view>
@@ -59,7 +61,13 @@ namespace OpenSMOKEpp
 			const auto* begin = token.data();
 			const auto* end = token.data() + token.size();
 			const auto [ptr, ec] = std::from_chars(begin, end, value);
-			return ec == std::errc{} && ptr == end;
+			if (ec != std::errc{} || ptr != end)
+				return false;
+
+			if constexpr (std::is_floating_point_v<Number>)
+				return std::isfinite(value);
+			else
+				return true;
 		}
 
 		[[nodiscard]] auto parse_char_token(const std::string_view token, char& value) noexcept -> bool
@@ -76,7 +84,7 @@ namespace OpenSMOKEpp
 		throw std::runtime_error("Dictionary " + name_ + " defined in file " + file_name_ + ": " + message);
 	}
 
-	void Dictionary::SetDictionary(const std::vector<std::string>& keywords, const std::vector<std::string>& options, 
+	void Dictionary::SetDictionary(const std::vector<std::string>& keywords, const std::vector<std::string>& options,
 											 const std::vector<unsigned int>& starting_lines, const std::vector<unsigned int>& ending_lines)
 	{
 		keywords_ = keywords;
@@ -113,7 +121,7 @@ namespace OpenSMOKEpp
 		bool required_keywords = grammar_.CheckRequiredKeyWords(keywords_);
 		if (required_keywords == false)
 			ErrorMessage("Error in the dictionary (required keywords). See the messages reported above.");
-		
+
 		// Check for conflicting keywords
 		bool conflicting_keywords = grammar_.CheckConflictingKeyWords(keywords_);
 		if (conflicting_keywords == false)
@@ -136,7 +144,7 @@ namespace OpenSMOKEpp
 	bool Dictionary::CheckOption(const std::string name_of_keyword)
 	{
 		const std::vector<std::string>::iterator it = find (keywords_.begin(), keywords_.end(), name_of_keyword);
-		
+
 		if (it == keywords_.end() )
 			return false;
 		else
@@ -263,7 +271,7 @@ namespace OpenSMOKEpp
 	void Dictionary::ReadSequence(const std::string name_of_keyword, std::string& value)
 	{
 		size_t index = CheckOption(name_of_keyword, SEQUENCE_STRING);
-		
+
 		value = options_[index];
 	}
 
@@ -465,7 +473,7 @@ namespace OpenSMOKEpp
 
 		const auto tokens = tokens_from(options_[index]);
 		const std::size_t n = tokens.size();
-		
+
 		if (n == 0 || n%2 !=0)
 		{
 			std::stringstream line; line << starting_lines_[index];
@@ -477,7 +485,7 @@ namespace OpenSMOKEpp
 
 		names.resize(n/2);
 		values.resize(n/2);
-		
+
 		for (std::size_t i = 0; i < n; i += 2)
 		{
 			const std::size_t count = i / 2;
@@ -525,14 +533,14 @@ namespace OpenSMOKEpp
 			names[count] = std::string(tokens[i + 1]);
 		}
 	}
-        
+
     void Dictionary::ReadOption(const std::string name_of_keyword, std::vector<double>& values, std::vector<std::string>& names)
 	{
 		size_t index = CheckOption(name_of_keyword, VECTOR_MEASURE);
 
 		const auto tokens = tokens_from(options_[index]);
 		const std::size_t n = tokens.size();
-		
+
 		if (n == 0 || n%2 !=0)
 		{
 			std::stringstream line; line << starting_lines_[index];
@@ -544,7 +552,7 @@ namespace OpenSMOKEpp
 
 		names.resize(n/2);
 		values.resize(n/2);
-		
+
 		for (std::size_t i = 0; i < n; i += 2)
 		{
 			const std::size_t count = i / 2;
