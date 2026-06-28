@@ -36,6 +36,7 @@
 #include "DictionaryKeyWord.h"
 #include "DictionaryLexer.h"
 
+#include <algorithm>
 #include <ostream>
 #include <stdexcept>
 
@@ -145,6 +146,8 @@ namespace OpenSMOKEpp
 
 		if (tokens.empty() || tokens[0] != "short_comment:")
 				ErrorMessage("The keyword short comment is not specified correctly.");
+
+		comment_short_.clear();
 		for (std::size_t i = 1; i < tokens.size(); ++i)
 			comment_short_ += std::string(tokens[i]) + " ";
 	}
@@ -166,22 +169,20 @@ namespace OpenSMOKEpp
 
 		if (tokens.empty() || tokens[0] != "compulsory_alternatives:")
 				ErrorMessage("The keyword compulsory_alternatives are not specified correctly.");
-			
+
+		compulsory_alternatives_.clear();
+		if (tokens.size() == 2 && tokens[1] == "none")
+			return;
+
+		if (std::find(tokens.begin() + 1, tokens.end(), "none") != tokens.end())
+			ErrorMessage("The keyword compulsory_alternatives are not specified correctly.");
+
+		if (is_compulsory_ == false && tokens.size() > 1)
+			ErrorMessage("The keyword compulsory_alternatives are not specified correctly.");
+
+		compulsory_alternatives_.reserve(tokens.size() > 0 ? tokens.size() - 1 : 0);
 		for (std::size_t i = 1; i < tokens.size(); ++i)
 			compulsory_alternatives_.push_back(std::string(tokens[i]));
-
-		if (is_compulsory_ == false)
-		{
-			if (compulsory_alternatives_.size() != 0)
-				if (compulsory_alternatives_[0] != "none")
-					ErrorMessage("The keyword compulsory_alternatives are not specified correctly.");
-		}
-
-		if (compulsory_alternatives_.size() == 1)
-		{
-			if (compulsory_alternatives_[0] == "none")
-				compulsory_alternatives_.resize(0);
-		}
 	}
 
 	void DictionaryKeyWord::SetRequiredKeyWords(const std::string& line)
@@ -190,15 +191,17 @@ namespace OpenSMOKEpp
 
 		if (tokens.empty() || tokens[0] != "required_keywords:")
 				ErrorMessage("The keyword required_keywords are not specified correctly.");
-			
+
+		required_keywords_.clear();
+		if (tokens.size() == 2 && tokens[1] == "none")
+			return;
+
+		if (std::find(tokens.begin() + 1, tokens.end(), "none") != tokens.end())
+			ErrorMessage("The keyword required_keywords are not specified correctly.");
+
+		required_keywords_.reserve(tokens.size() > 0 ? tokens.size() - 1 : 0);
 		for (std::size_t i = 1; i < tokens.size(); ++i)
 			required_keywords_.push_back(std::string(tokens[i]));
-
-		if (required_keywords_.size() != 0)
-		{
-			if (required_keywords_[0] == "none")
-				required_keywords_.resize(0);
-		}
 	}
 
 	void DictionaryKeyWord::SetConflictingKeywords(const std::string& line)
@@ -207,15 +210,17 @@ namespace OpenSMOKEpp
 
 		if (tokens.empty() || tokens[0] != "conflicting_keywords:")
 				ErrorMessage("The keyword conflicting_keywords are not specified correctly.");
-			
+
+		conflicting_keywords_.clear();
+		if (tokens.size() == 2 && tokens[1] == "none")
+			return;
+
+		if (std::find(tokens.begin() + 1, tokens.end(), "none") != tokens.end())
+			ErrorMessage("The keyword conflicting_keywords are not specified correctly.");
+
+		conflicting_keywords_.reserve(tokens.size() > 0 ? tokens.size() - 1 : 0);
 		for (std::size_t i = 1; i < tokens.size(); ++i)
 			conflicting_keywords_.push_back(std::string(tokens[i]));
-
-		if (conflicting_keywords_.size() != 0)
-		{
-			if (conflicting_keywords_[0] == "none")
-				conflicting_keywords_.resize(0);
-		}
 	}
 
 	DictionaryKeyWord::DictionaryKeyWord(std::vector<std::string>& lines)

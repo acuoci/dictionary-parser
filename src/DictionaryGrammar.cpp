@@ -56,6 +56,10 @@ namespace OpenSMOKEpp
 
 	void DictionaryGrammar::UserDefined()
 	{
+		keywords_.clear();
+		list_of_keywords_names_.clear();
+		number_of_keywords_ = 0;
+
 		DefineRules();
 
 		// Number of keywords
@@ -78,7 +82,10 @@ namespace OpenSMOKEpp
 	void DictionaryGrammar::ReadFromFile(const std::string file_name)
 	{
 		file_name_ = std::filesystem::path(file_name);
-        
+		keywords_.clear();
+		list_of_keywords_names_.clear();
+		number_of_keywords_ = 0;
+
 		std::ifstream fInput(file_name_);
 		if (!fInput.is_open())
 			throw std::runtime_error("Unable to open grammar file: " + file_name_.string());
@@ -107,6 +114,10 @@ namespace OpenSMOKEpp
 		for(unsigned int i=0;i<number_of_keywords_;i++)
 		{
 			std::vector<std::string> block_of_lines;
+			block_of_lines.reserve(7);
+			if (line_keywords[i] - 1 + 7 > lines.size())
+				ErrorMessage("A keyword block is truncated. Each keyword definition must contain seven lines.");
+
 			for(unsigned int j=line_keywords[i]-1;j<line_keywords[i]-1+7;j++)
 				block_of_lines.push_back(lines[j]);
 			DictionaryKeyWord tmp(block_of_lines);
