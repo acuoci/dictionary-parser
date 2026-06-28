@@ -44,114 +44,181 @@
 
 namespace OpenSMOKEpp
 {
-	//!  A class for storing input files in DICTIONARY format
-	/*!
-			This class provides the tools to read and manage the files containing the definition of one
-			or more dictionaries used by the different OpenSMOKE++ applications
-	*/
-
+	/**
+	 * \brief Stores a preprocessed dictionary input file.
+	 *
+	 * The class reads a physical input file, strips `//` comments, replaces tabs
+	 * with spaces, classifies blank and nonblank lines, and preserves 1-based
+	 * source-line indices for diagnostics.
+	 */
 	class DictionaryInputFile {
 	public:
-
 		/**
-		*@brief Constructor: default
-		*/
+		 * \brief Constructs an empty input-file container.
+		 *
+		 * \note Line counters are initialized to zero.
+		 */
 		DictionaryInputFile();
 
 		/**
-		*@brief Constructor: from a file
-		*/
+		 * \brief Reads and preprocesses a dictionary input file.
+		 *
+		 * \param[in] file_name Path to the input file.
+		 * \warning Throws `std::runtime_error` if the file cannot be opened or
+		 * read successfully.
+		 */
 		DictionaryInputFile(const std::string& file_name);
 
 		/**
-		*@brief Default copy constructor
-		*/
+		 * \brief Copies all preprocessed file state from another object.
+		 *
+		 * \param[in] orig Source object.
+		 */
 		DictionaryInputFile(const DictionaryInputFile& orig) = default;
 
 		/**
-		*@brief Default destructor
-		*/
+		 * \brief Destroys the input-file container.
+		 */
 		virtual ~DictionaryInputFile() = default;
 
 	public:
-    
 		/**
-		*@brief Returns the number of lines in the file
-		*/
+		 * \brief Returns the total number of classified lines.
+		 *
+		 * \return Number of blank plus nonblank lines.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] int number_of_lines() const noexcept { return number_of_lines_; }
 
 		/**
-		*@brief Returns the number of blank lines in the file
-		*/
+		 * \brief Returns the number of blank or comment-only lines.
+		 *
+		 * \return Number of entries in `blank_lines()`.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] int number_of_blank_lines() const noexcept { return number_of_blank_lines_; }
 
 		/**
-		*@brief Returns the number of useful linse in the file (i.e. lines which
-				have to be interpreted). Of course blank lines and comment lines are
-				automatically excluded from this list
-		*/
+		 * \brief Returns the number of nonblank lines available to the parser.
+		 *
+		 * \return Number of entries in `good_lines()`.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] int number_of_good_lines() const noexcept { return number_of_good_lines_; }
-    
+
 		/**
-		*@brief Returns the indices of good lines (i.e. lines to be interpreted)
-		*/
+		 * \brief Returns original line indices for nonblank lines.
+		 *
+		 * \return Constant reference to 1-based source-line indices.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::vector<int>& indices_of_good_lines() const noexcept { return indices_of_good_lines_; }
 
 		/**
-		*@brief Returns the indices of blanck lines
-		*/
+		 * \brief Returns original line indices for blank lines.
+		 *
+		 * \return Constant reference to 1-based source-line indices.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::vector<int>& indices_of_blank_lines() const noexcept { return indices_of_blank_lines_; }
-    
+
 		/**
-		*@brief Returns the good lines (i.e. lines to be interpreted)
-		*/
+		 * \brief Returns nonblank preprocessed lines.
+		 *
+		 * \return Constant reference to lines after comment stripping and tab
+		 * normalization.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::vector<std::string>& good_lines() const noexcept { return good_lines_; }
 
 		/**
-		*@brief Returns the clean lines (without comments, without tab, etc)
-		*/
+		 * \brief Returns all preprocessed lines.
+		 *
+		 * \return Constant reference to all physical lines after preprocessing.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::vector<std::string>& clean_lines() const noexcept { return clean_lines_; }
+
+		/**
+		 * \brief Returns mutable access to all preprocessed lines.
+		 *
+		 * \return Mutable reference to all physical lines after preprocessing.
+		 * \warning Mutating this vector can invalidate parser assumptions about
+		 * line ordering and diagnostics.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] std::vector<std::string>& clean_lines() noexcept { return clean_lines_; }
 
 		/**
-		*@brief Returns the blank lines (i.e. lines to be interpreted)
-		*/
+		 * \brief Returns blank or comment-only preprocessed lines.
+		 *
+		 * \return Constant reference to blank-line storage.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::vector<std::string>& blank_lines() const noexcept { return blank_lines_; }
-    
+
 		/**
-		*@brief Returns the name of the file
-		*/
+		 * \brief Returns the input file name without its parent path.
+		 *
+		 * \return File-name component of the stored path.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] std::filesystem::path file_name() const { return file_name_.filename(); }
 
 		/**
-		*@brief Returns the path of the file (without the name of the file)
-		*/
+		 * \brief Returns the parent directory of the input file.
+		 *
+		 * \return Parent path component of the stored path.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] std::filesystem::path folder_path() const { return file_name_.parent_path(); }
 
 		/**
-		*@brief Returns the size of the file in bytes
-		*/
+		 * \brief Returns the current size of the input file in bytes.
+		 *
+		 * \return File size in bytes as reported by `std::filesystem`.
+		 * \warning Throws `std::filesystem::filesystem_error` if the file cannot
+		 * be queried.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] std::uintmax_t size() const { return std::filesystem::file_size(file_name_); }
 
 		/**
-		*@brief Writes information about the status of the file on output stream
-		*/
+		 * \brief Writes file status information to an output stream.
+		 *
+		 * \param[out] fOut Stream receiving file name, path, size, and line
+		 * counters.
+		 */
 		void Status(std::ostream &fOut) const;
-    
+
 	private:
-    
-		int number_of_lines_ = 0;						//!< total number of lines
-		int number_of_good_lines_ = 0;					//!< total number of good lines
-		int number_of_blank_lines_ = 0;					//!< total number of blank lines
-		std::vector<int> indices_of_good_lines_;		//!< indices of good lines
-		std::vector<int> indices_of_blank_lines_;		//!< indices of blank lines
-		std::vector<std::string> good_lines_;			//!< good lines
-		std::vector<std::string> blank_lines_;			//!< blank lines
-		std::vector<std::string> clean_lines_;			//!< clean lines
-    
-		std::filesystem::path file_name_;			//!< full name (path + file name)
+		/** \brief Total number of classified physical lines. */
+		int number_of_lines_ = 0;
+
+		/** \brief Number of nonblank preprocessed lines. */
+		int number_of_good_lines_ = 0;
+
+		/** \brief Number of blank or comment-only preprocessed lines. */
+		int number_of_blank_lines_ = 0;
+
+		/** \brief 1-based original indices for `good_lines_`. */
+		std::vector<int> indices_of_good_lines_;
+
+		/** \brief 1-based original indices for `blank_lines_`. */
+		std::vector<int> indices_of_blank_lines_;
+
+		/** \brief Nonblank preprocessed lines. */
+		std::vector<std::string> good_lines_;
+
+		/** \brief Blank or comment-only preprocessed lines. */
+		std::vector<std::string> blank_lines_;
+
+		/** \brief All physical lines after lexical preprocessing. */
+		std::vector<std::string> clean_lines_;
+
+		/** \brief Full path of the input file. */
+		std::filesystem::path file_name_;
 	};
 }
 
 #endif	/* OpenSMOKEpp_DictionaryInputFile_H */
-

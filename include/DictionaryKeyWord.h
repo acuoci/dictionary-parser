@@ -42,164 +42,285 @@
 
 namespace OpenSMOKEpp
 {
-	//!  A class which defines the keywords to be used in the OpenSMOKE++ dictionaries
-	/*!
-			This class defines the keywords to be used in the OpenSMOKE++ dictionaries
-	*/
+	/**
+	 * \brief Enumerates supported dictionary keyword value types.
+	 *
+	 * The type controls which `Dictionary::Read*` overload can legally read a
+	 * keyword after grammar validation.
+	 */
+	enum DictionaryKeyWordTypes {
+		/** \brief No value type. */
+		NONE,
+		/** \brief One signed integer token. */
+		SINGLE_INT,
+		/** \brief One floating-point token. */
+		SINGLE_DOUBLE,
+		/** \brief One string token. */
+		SINGLE_STRING,
+		/** \brief One single-character token. */
+		SINGLE_CHAR,
+		/** \brief One boolean token: `true`, `false`, `on`, or `off`. */
+		SINGLE_BOOL,
+		/** \brief One floating-point token followed by one unit token. */
+		SINGLE_MEASURE,
+		/** \brief One path value stored as `std::filesystem::path`. */
+		SINGLE_PATH,
+		/** \brief One dictionary-name token. */
+		SINGLE_DICTIONARY,
+		/** \brief Sequence of signed integer tokens. */
+		VECTOR_INT,
+		/** \brief Sequence of floating-point tokens. */
+		VECTOR_DOUBLE,
+		/** \brief Sequence of string tokens. */
+		VECTOR_STRING,
+		/** \brief Sequence of single-character tokens. */
+		VECTOR_CHAR,
+		/** \brief Sequence of boolean tokens. */
+		VECTOR_BOOL,
+		/** \brief Sequence of repeated floating-point/unit token pairs. */
+		VECTOR_MEASURE,
+		/** \brief Sequence of repeated string/floating-point token pairs. */
+		VECTOR_STRING_DOUBLE,
+		/** \brief Sequence of repeated integer/string token pairs. */
+		VECTOR_INT_STRING,
+		/** \brief Raw option string preserving all tokens after the keyword. */
+		SEQUENCE_STRING
+	};
 
-	enum DictionaryKeyWordTypes { NONE, SINGLE_INT, SINGLE_DOUBLE, SINGLE_STRING, SINGLE_CHAR, SINGLE_BOOL, SINGLE_MEASURE, SINGLE_PATH, SINGLE_DICTIONARY,
-											VECTOR_INT, VECTOR_DOUBLE, VECTOR_STRING, VECTOR_CHAR, VECTOR_BOOL, VECTOR_MEASURE,
-											VECTOR_STRING_DOUBLE, VECTOR_INT_STRING, SEQUENCE_STRING };
-
+	/**
+	 * \brief Defines one legal keyword in a dictionary grammar.
+	 *
+	 * A keyword rule stores its name, value type, short diagnostic comment,
+	 * compulsory status, compulsory alternatives, required keywords, and
+	 * mutually conflicting keywords.
+	 */
 	class DictionaryKeyWord {
 	public:
-
 		/**
-		* Default constructor
-		*/
+		 * \brief Constructs an empty keyword rule.
+		 *
+		 * \warning The object is not semantically valid until initialized by a
+		 * constructor that sets name and type or by grammar-file parsing.
+		 */
 		DictionaryKeyWord() {};
 
 		/**
-		* Constructor
-		* @param name name of the keyword (this name will be directly used in the ascii file)
-		* @param type type of the keyword
-		* @param short_comment short comment which will be displayed in the summary
-		* @param is_compulsory if the keyword is compulsory
-		*/
-		DictionaryKeyWord(const std::string& name, const DictionaryKeyWordTypes type, 
+		 * \brief Constructs a keyword rule without dependency relationships.
+		 *
+		 * \param[in] name Keyword name, including the leading `@`.
+		 * \param[in] type Expected value type.
+		 * \param[in] short_comment Human-readable short description.
+		 * \param[in] is_compulsory `true` if this keyword must appear unless a
+		 * compulsory alternative satisfies the rule.
+		 */
+		DictionaryKeyWord(const std::string& name, const DictionaryKeyWordTypes type,
 									const std::string& short_comment, const bool is_compulsory);
 
 		/**
-		* Constructor
-		* @param name name of the keyword (this name will be directly used in the ascii file)
-		* @param type type of the keyword
-		* @param short_comment short comment which will be displayed in the summary
-		* @param is_compulsory if the keyword is compulsory
-		* @param compulsory_alternatives list of alternative keywords to the current compulsory keyword
-		* @param required_keywords list of keyword which are needed by the current keyword
-		* @param conflicting_keywords list of conflicting keywords
-		*/
-		DictionaryKeyWord(const std::string& name, const DictionaryKeyWordTypes type, 
-									const std::string& short_comment, const bool is_compulsory, 
-									const std::string& compulsory_alternatives, const std::string& required_keywords, 
+		 * \brief Constructs a keyword rule with dependency relationships.
+		 *
+		 * \param[in] name Keyword name, including the leading `@`.
+		 * \param[in] type Expected value type.
+		 * \param[in] short_comment Human-readable short description.
+		 * \param[in] is_compulsory `true` if the keyword is compulsory.
+		 * \param[in] compulsory_alternatives Space-delimited alternatives, or
+		 * `none`.
+		 * \param[in] required_keywords Space-delimited keywords required when
+		 * this keyword is present, or `none`.
+		 * \param[in] conflicting_keywords Space-delimited keywords mutually
+		 * exclusive with this keyword, or `none`.
+		 */
+		DictionaryKeyWord(const std::string& name, const DictionaryKeyWordTypes type,
+									const std::string& short_comment, const bool is_compulsory,
+									const std::string& compulsory_alternatives, const std::string& required_keywords,
 									const std::string& conflicting_keywords);
 
 		/**
-		* Constructor
-		* Initializes the keyword from a block of lines extracted from a file
-		* @param lines
-		*/
+		 * \brief Constructs a keyword rule from seven grammar-file lines.
+		 *
+		 * \param[in,out] lines Grammar block lines. Lines are trimmed in place.
+		 * \warning Throws `std::runtime_error` if the block does not contain
+		 * exactly seven lines or if any line has invalid grammar-keyword syntax.
+		 */
 		DictionaryKeyWord(std::vector<std::string>& lines);
 
 		/**
-		*@brief Default destructor
-		*/
+		 * \brief Destroys the keyword rule.
+		 */
 		virtual ~DictionaryKeyWord() = default;
 
 		/**
-		* Shows a short summary of the keyword
-		*/
+		 * \brief Writes a compact keyword summary.
+		 *
+		 * \param[out] fout Stream receiving name, type, and short comment.
+		 */
 		void ShortSummary(std::ostream& fout) const;
 
 		/**
-		* Returns the name of the keyword
-		*/
+		 * \brief Returns the keyword name.
+		 *
+		 * \return Constant reference to the keyword name, including leading `@`.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::string& name() const noexcept { return name_; }
 
 		/**
-		* Returns the type of the keyword
-		*/
+		 * \brief Returns the expected keyword value type.
+		 *
+		 * \return Value from `DictionaryKeyWordTypes`.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] DictionaryKeyWordTypes type() const noexcept { return type_; }
 
 		/**
-		* Returns the type of the keyword in ASCII format
-		*/
+		 * \brief Returns the expected value type as an ASCII token.
+		 *
+		 * \return Constant reference to the type token used in grammar files.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::string& type_ascii() const noexcept { return type_ascii_; }
 
 		/**
-		* Returns the comment
-		*/
+		 * \brief Returns the short diagnostic comment.
+		 *
+		 * \return Constant reference to the stored comment.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::string& comment_short() const noexcept { return comment_short_; }
 
 		/**
-		* Returns true is the keyword is compulsory
-		*/
+		 * \brief Tests whether the keyword is compulsory.
+		 *
+		 * \return `true` if the keyword must be present unless satisfied by a
+		 * compulsory alternative.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] bool is_compulsory() const noexcept { return is_compulsory_; }
 
 		/**
-		* Returns the list of alternatives to the current compulsory keyword
-		*/
+		 * \brief Returns compulsory alternatives for this keyword.
+		 *
+		 * \return Constant reference to keyword names that can replace this
+		 * compulsory keyword.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::vector<std::string>& compulsory_alternatives() const noexcept { return compulsory_alternatives_; }
 
 		/**
-		* Returns the the list of keywords needed by the current keyword
-		*/
+		 * \brief Returns keywords required when this keyword is present.
+		 *
+		 * \return Constant reference to required keyword names.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::vector<std::string>& required_keywords() const noexcept { return required_keywords_; }
 
 		/**
-		* Returns the the list of keywords conflicting with the current keyword
-		*/
+		 * \brief Returns keywords that conflict with this keyword.
+		 *
+		 * \return Constant reference to mutually exclusive keyword names.
+		 * \note This function is `[[nodiscard]]` and `noexcept`.
+		 */
 		[[nodiscard]] const std::vector<std::string>& conflicting_keywords() const noexcept { return conflicting_keywords_; }
 
 	private:
-    
-		std::string name_;									//!< name of the keyword
-		std::string type_ascii_;							//!< type of keyword
-		DictionaryKeyWordTypes type_;						//!< type of keyword
-		std::string comment_short_;							//!< short comment
-		bool is_compulsory_;								//!< is the key word compulsory?
-		std::vector<std::string> compulsory_alternatives_;	//!< list of compulsory alternatives (if any)
-		std::vector<std::string> required_keywords_;		//!< list of required keywords (if any)
-		std::vector<std::string> conflicting_keywords_;		//!< list of excluded keywords (if any)
-		
+		/** \brief Keyword name, including leading `@`. */
+		std::string name_;
+
+		/** \brief ASCII representation of `type_`. */
+		std::string type_ascii_;
+
+		/** \brief Expected value type. */
+		DictionaryKeyWordTypes type_;
+
+		/** \brief Short diagnostic comment. */
+		std::string comment_short_;
+
+		/** \brief Whether the keyword is compulsory. */
+		bool is_compulsory_;
+
+		/** \brief Alternative keywords satisfying the same compulsory rule. */
+		std::vector<std::string> compulsory_alternatives_;
+
+		/** \brief Keywords required when this keyword appears. */
+		std::vector<std::string> required_keywords_;
+
+		/** \brief Keywords mutually exclusive with this keyword. */
+		std::vector<std::string> conflicting_keywords_;
+
 	private:
+		/**
+		 * \brief Parses and stores the `keyword:` grammar line.
+		 *
+		 * \param[in] line Grammar line with exactly `keyword: <name>`.
+		 * \warning Throws `std::runtime_error` on invalid syntax.
+		 */
+		void SetKeyword(const std::string& line);
 
 		/**
-		* Set the keyword
-		*/
-		void SetKeyword(const std::string& line);
-		
-		/**
-		* Set the keyword type
-		*/
+		 * \brief Parses and stores the `type:` grammar line.
+		 *
+		 * \param[in] line Grammar line with exactly `type: <type-token>`.
+		 * \warning Throws `std::runtime_error` on invalid or unsupported type.
+		 */
 		void SetType(const std::string& line);
 
 		/**
-		* Set the keyword type (ASCII format)
-		*/
+		 * \brief Synchronizes the ASCII type token with `type_`.
+		 *
+		 * \warning Throws `std::runtime_error` if `type_` is not supported.
+		 */
 		void SetTypeASCII();
 
 		/**
-		* Set the comment
-		*/
+		 * \brief Parses and stores the `short_comment:` grammar line.
+		 *
+		 * \param[in] line Grammar line whose remaining tokens form the comment.
+		 * \warning Throws `std::runtime_error` if the line does not start with
+		 * `short_comment:`.
+		 */
 		void SetComment(const std::string& line);
 
 		/**
-		* Set if the keyword is compulsory
-		*/
+		 * \brief Parses and stores the `is_compulsory:` grammar line.
+		 *
+		 * \param[in] line Grammar line with value `true` or `false`.
+		 * \warning Throws `std::runtime_error` on invalid syntax or value.
+		 */
 		void SetIsCompulsory(const std::string& line);
 
 		/**
-		* Set the list of alternative keywords
-		*/
+		 * \brief Parses compulsory alternatives from a grammar line.
+		 *
+		 * \param[in] line Grammar line beginning with `compulsory_alternatives:`.
+		 * \warning Throws `std::runtime_error` if a noncompulsory keyword
+		 * declares alternatives other than `none`.
+		 */
 		void SetCompulsoryAlternatives(const std::string& line);
 
 		/**
-		* Set the list of keywords which are needed by the current keyword
-		*/
+		 * \brief Parses required keywords from a grammar line.
+		 *
+		 * \param[in] line Grammar line beginning with `required_keywords:`.
+		 * \warning Throws `std::runtime_error` on invalid syntax.
+		 */
 		void SetRequiredKeyWords(const std::string& line);
 
 		/**
-		* Set the list of keywords which conflicts whit the current keyword
-		*/
+		 * \brief Parses conflicting keywords from a grammar line.
+		 *
+		 * \param[in] line Grammar line beginning with `conflicting_keywords:`.
+		 * \warning Throws `std::runtime_error` on invalid syntax.
+		 */
 		void SetConflictingKeywords(const std::string& line);
 
 		/**
-		* Error message utility
-		*/
+		 * \brief Raises a keyword-rule construction error.
+		 *
+		 * \param[in] message Diagnostic message without keyword prefix.
+		 * \warning Always throws `std::runtime_error`.
+		 */
 		void ErrorMessage(const std::string message) const;
 	};
 }
 
 #endif	/* OpenSMOKEpp_DictionaryKeyWord_H */
-

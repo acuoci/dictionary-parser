@@ -44,67 +44,101 @@
 #include "Dictionary.h"
 
 namespace OpenSMOKEpp
-{	
-	//!  A class which manages the dictionary written on a file
-	/*!
-			This class mainly provides the tools to extract data from the ascii file containing the 
-			dictionary definition.
-	*/
-
+{
+	/**
+	 * \brief Parses and validates one raw dictionary block.
+	 *
+	 * `DictionaryFile` receives the preprocessed physical lines belonging to a
+	 * single dictionary block, validates block syntax, compacts multiline
+	 * keyword entries, and transfers keyword/value data into a `Dictionary`.
+	 */
 	class DictionaryFile
 	{
 		public:
-
 			/**
-			* Sets the name of the file from which the dictionary is imported
-			*/
+			 * \brief Sets the source file name for diagnostics.
+			 *
+			 * \param[in] file_name File name or path from which this dictionary
+			 * block was extracted.
+			 */
 			void SetFileName(const std::string file_name) { file_name_ = file_name; }
 
 			/**
-			* Sets the index corresponding to the first line of the dictionary with respect to the 
-			  ascii file from which the dictionary is imported
-			*/
+			 * \brief Sets the 1-based source line where the dictionary block begins.
+			 *
+			 * \param[in] index_first_line Original file line containing
+			 * `Dictionary <name>`.
+			 * \note This function is `noexcept`.
+			 */
 			void SetFirstLine(const unsigned int index_first_line) noexcept { index_first_line_ = index_first_line; }
 
 			/**
-			* Adds a line to the dictionary
-			*/
+			 * \brief Appends a preprocessed physical line to this block.
+			 *
+			 * \param[in] line Line after comment stripping and tab normalization.
+			 */
 			void AddLine(const std::string line) { lines_.push_back(line); }
 
 			/**
-			* Analyzes all the lines in order to check if the dictionary is correctly written (i.e. if
-			  syntax errors are present)
-			*/
+			 * \brief Validates block syntax and compacts keyword entries.
+			 *
+			 * \warning Throws `std::runtime_error` if the dictionary name, curly
+			 * braces, keyword markers, semicolon terminators, or nested-block
+			 * structure are invalid.
+			 * \note Multiline keyword values are joined until the next `@` marker.
+			 */
 			void Analyze();
 
 			/**
-			* All the relevant information is moved to the Dictionary object
-			*/
+			 * \brief Moves parsed keyword data into a dictionary object.
+			 *
+			 * \param[out] dictionary Destination dictionary receiving name,
+			 * source-file name, keywords, options, and source line ranges.
+			 * \warning Throws `std::runtime_error` if duplicate keywords are found
+			 * in this dictionary block.
+			 */
 			void Transfer(Dictionary& dictionary);
 
 			/**
-			* Writes the dictionary (useful for debugging purposes)
-			*/
+			 * \brief Writes a diagnostic representation of this parsed block.
+			 *
+			 * \param[out] fout Stream receiving compacted dictionary data.
+			 */
 			void Write(std::ostream& fout) const;
-		
-		private:
 
-			std::string name_;									//!< name of the dictionary
-			std::string file_name_;								//!< name of the file from which the dictionary is imported
-			unsigned int index_first_line_;						//!< index of the first line
-			std::vector<std::string> lines_;					//!< vector containing all the lines
-			std::vector<std::string> good_lines_;				//!< vector containing all and only the useful lines
-			std::vector<std::string> extended_lines_;			//!< TODO
-			std::vector<unsigned int> indices_of_good_lines_;	//!< indices of all and onlythe useful lines
-			std::vector<unsigned int> i_start_;					//!< local/global indeces correspondence
+		private:
+			/** \brief Parsed dictionary name. */
+			std::string name_;
+
+			/** \brief Source file name used in diagnostics. */
+			std::string file_name_;
+
+			/** \brief 1-based original line index of the dictionary declaration. */
+			unsigned int index_first_line_;
+
+			/** \brief Preprocessed physical lines belonging to this block. */
+			std::vector<std::string> lines_;
+
+			/** \brief Nonblank lines between the opening and closing braces. */
+			std::vector<std::string> good_lines_;
+
+			/** \brief One compacted logical keyword entry per `@` marker. */
+			std::vector<std::string> extended_lines_;
+
+			/** \brief 1-based original line indices for `good_lines_`. */
+			std::vector<unsigned int> indices_of_good_lines_;
+
+			/** \brief Mapping from compacted entries to local `good_lines_` offsets. */
+			std::vector<unsigned int> i_start_;
 
 			/**
-			* Error message utility
-			*/
+			 * \brief Raises a dictionary-block parsing error.
+			 *
+			 * \param[in] message Diagnostic message without block context.
+			 * \warning Always throws `std::runtime_error`.
+			 */
 			void ErrorMessage(const std::string message) const;
 	};
 }
 
 #endif // OpenSMOKEpp_DictionaryFile_H
-
-

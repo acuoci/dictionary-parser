@@ -45,116 +45,182 @@
 
 namespace OpenSMOKEpp
 {
-	//!  A class which defines the grammar rules to be used by the Dictionary
-	/*!
-			This class defines the grammar rules which have to be respected by the Dictionary.
-	*/
-
+	/**
+	 * \brief Defines valid keywords and consistency rules for a dictionary.
+	 *
+	 * A grammar owns a set of `DictionaryKeyWord` rules and validates a parsed
+	 * dictionary for undefined keywords, compulsory keywords, required keyword
+	 * dependencies, conflicting keywords, and requested keyword value types.
+	 */
 	class DictionaryGrammar {
-		
 		friend class Dictionary;
 
 	public:
-
 		/**
-		* Initializes the grammar from a file (quite unusual)
-		*/
+		 * \brief Reads grammar keyword definitions from a text file.
+		 *
+		 * \param[in] file_name Path to the grammar definition file.
+		 * \warning Throws `std::runtime_error` if the file cannot be read, if a
+		 * keyword block is malformed, or if grammar consistency checks fail.
+		 * \note Each keyword block is expected to contain seven lines.
+		 */
 		void ReadFromFile(const std::string file_name);
 
 		/**
-		* Writes the grammar in a readable format
-		*/
+		 * \brief Writes a compact grammar summary.
+		 *
+		 * \param[out] fout Stream receiving keyword names, types, and comments.
+		 */
 		void ShortSummary(std::ostream& fout) const;
 
 		/**
-		* Shows the list of available keywords on the screen
-		*/
+		 * \brief Writes the list of available keywords to the standard output.
+		 *
+		 * \note This function is used for `@Help` diagnostics and undefined
+		 * keyword diagnostics.
+		 */
 		void ShowListAvailableKeywords();
 
 		/**
-		* Returns the dictionary grammar name
-		*/
+		 * \brief Returns the grammar name.
+		 *
+		 * \return Grammar name string.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] std::string name() const { return name_; }
 
 		/**
-		* Default destructor
-		*/
+		 * \brief Destroys the grammar object.
+		 */
 		virtual ~DictionaryGrammar() = default;
-    
+
 	private:
-    
-		std::string name_;								//!< name of grammar
-		std::filesystem::path file_name_;				//!< name of the file containing the grammar (if any)
+		/** \brief Grammar name used in diagnostic output. */
+		std::string name_;
 
-	protected: 
+		/** \brief Source file path when the grammar was loaded from file. */
+		std::filesystem::path file_name_;
 
+	protected:
 		/**
-		* Initializes the grammar from a file (quite unusual)
-		*/
+		 * \brief Builds a hard-coded user grammar and validates it.
+		 *
+		 * \warning Throws `std::runtime_error` if `DefineRules()` fails to add a
+		 * consistent set of keyword rules.
+		 * \note Called by `Dictionary::SetGrammar(DictionaryGrammar&)`.
+		 */
 		void UserDefined();
 
 		/**
-		* Checks for the @Help keyword
-		*/
+		 * \brief Checks whether `@Help` is present.
+		 *
+		 * \param[in] list_of_keywords Parsed keyword names from a dictionary.
+		 * \return `true` if `@Help` is present, otherwise `false`.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] bool CheckForHelpKeyWord(std::vector<std::string>& list_of_keywords);
 
 		/**
-		* Checks the keywords in a dictionary to see if some of them are undefined in the current grammar
-		*/
+		 * \brief Checks for dictionary keywords not defined by this grammar.
+		 *
+		 * \param[in] list_of_keywords Parsed keyword names from a dictionary.
+		 * \return `true` if all keywords are known, otherwise `false`.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] bool CheckUndefinedKeyWords(std::vector<std::string>& list_of_keywords);
 
 		/**
-		* Checks the keywords in a dictionary to see if all the compulsory keywords are present
-		*/
+		 * \brief Checks whether compulsory keyword rules are satisfied.
+		 *
+		 * \param[in] list_of_keywords Parsed keyword names from a dictionary.
+		 * \return `true` if all compulsory requirements are satisfied, otherwise
+		 * `false`.
+		 * \note Compulsory alternatives are treated as an exclusive set.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] bool CheckCompulsoryKeyWords(std::vector<std::string>& list_of_keywords);
 
 		/**
-		* Checks the keywords in a dictionary to see if all the required keywords are present
-		*/
+		 * \brief Checks required-keyword dependencies.
+		 *
+		 * \param[in] list_of_keywords Parsed keyword names from a dictionary.
+		 * \return `true` if every present keyword has all required companion
+		 * keywords, otherwise `false`.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] bool CheckRequiredKeyWords(std::vector<std::string>& list_of_keywords);
 
 		/**
-		* Checks the keywords in a dictionary to see if there are conflicts between them
-		*/
+		 * \brief Checks mutually exclusive keyword rules.
+		 *
+		 * \param[in] list_of_keywords Parsed keyword names from a dictionary.
+		 * \return `true` if no conflicting keyword pair is present, otherwise
+		 * `false`.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] bool CheckConflictingKeyWords(std::vector<std::string>& list_of_keywords);
 
 		/**
-		* Checks the keywords type
-		*/
+		 * \brief Checks whether a keyword has an expected declared value type.
+		 *
+		 * \param[in] keyword_name Keyword name including leading `@`.
+		 * \param[in] expected_type Type required by the caller.
+		 * \return `true` if the grammar contains `keyword_name` with
+		 * `expected_type`, otherwise `false`.
+		 * \note This function is `[[nodiscard]]`.
+		 */
 		[[nodiscard]] bool CheckType(const std::string keyword_name, const DictionaryKeyWordTypes expected_type);
 
-		unsigned int number_of_keywords_;						//!< number of keywords defined in the grammar
-		std::vector<DictionaryKeyWord> keywords_;		//!< list of keywords defined in the grammar
-		std::vector<std::string> list_of_keywords_names_;		//!< list of keywords names defined in the grammar
+		/** \brief Number of keyword rules in `keywords_`. */
+		unsigned int number_of_keywords_;
+
+		/** \brief Keyword rules defined by this grammar. */
+		std::vector<DictionaryKeyWord> keywords_;
+
+		/** \brief Cached keyword names, parallel to `keywords_`. */
+		std::vector<std::string> list_of_keywords_names_;
 
 		/**
-		* Checks the internal consistency of the grammar
-		*/
+		 * \brief Validates internal grammar consistency.
+		 *
+		 * \warning Throws `std::runtime_error` if duplicate keyword names or
+		 * inconsistent relationships are detected.
+		 */
 		void Check();
-		
+
 		/**
-		* Additional checks
-		*/
+		 * \brief Verifies that all referenced related keywords exist.
+		 *
+		 * \warning Throws `std::runtime_error` if compulsory alternatives,
+		 * required keywords, or conflicting keywords refer to undefined names.
+		 */
 		void CheckExistence();
 
 		/**
-		* Adds a new keyword to the grammar
-		*/	
+		 * \brief Adds one keyword rule to this grammar.
+		 *
+		 * \param[in] keyword Keyword rule to append.
+		 * \note Derived grammar classes call this inside `DefineRules()`.
+		 */
 		void AddKeyWord(const DictionaryKeyWord& keyword);
 
 		/**
-		* This function must be over-written by the derived Grammar which are hard-coded by the user. 
-		  If the grammar is imported from a file this function is never called.
-		*/
+		 * \brief Defines hard-coded keyword rules in derived grammar classes.
+		 *
+		 * \warning The base implementation throws `std::runtime_error`; derived
+		 * grammar classes must override this function when using
+		 * `Dictionary::SetGrammar(DictionaryGrammar&)`.
+		 */
 		virtual void DefineRules();
 
 		/**
-		* Error message utility
-		*/
+		 * \brief Raises a grammar-scoped error.
+		 *
+		 * \param[in] message Diagnostic message without grammar prefix.
+		 * \warning Always throws `std::runtime_error`.
+		 */
 		void ErrorMessage(const std::string message) const;
-		
 	};
 }
 
 #endif	/* OpenSMOKEpp_DictionaryGrammar_H */
-
