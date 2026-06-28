@@ -82,10 +82,11 @@ void DictionaryManager::ReadDictionariesFromFile(std::string_view file_name) {
     Dictionary dictionary;
     dictionary_file.Transfer(dictionary);
 
-    if (map_of_dictionaries_.emplace(dictionary.name(), std::move(dictionary))
-            .second == false)
-      std::cout << "Insertion of new dictionary failed. Key was present."
-                << std::endl;
+    const std::string dictionary_name = dictionary.name();
+    if (!map_of_dictionaries_.emplace(dictionary_name, std::move(dictionary))
+             .second)
+      ErrorMessage("The " + dictionary_name +
+                   " dictionary is specified more than once.");
   }
 }
 

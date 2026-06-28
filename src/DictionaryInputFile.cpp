@@ -38,33 +38,41 @@
 
 #include <filesystem>
 #include <ostream>
+#include <system_error>
 #include <utility>
 
-namespace OpenSMOKEpp
-{
-	DictionaryInputFile::DictionaryInputFile() = default;
+namespace OpenSMOKEpp {
+DictionaryInputFile::DictionaryInputFile() = default;
 
-	DictionaryInputFile::DictionaryInputFile(const std::string& file_name) 
-	{
-		auto preprocessed = Lexer::read_and_preprocess_file(std::filesystem::path(file_name));
-		file_name_ = std::move(preprocessed.file_name);
-		indices_of_good_lines_ = std::move(preprocessed.indices_of_good_lines);
-		indices_of_blank_lines_ = std::move(preprocessed.indices_of_blank_lines);
-		good_lines_ = std::move(preprocessed.good_lines);
-		blank_lines_ = std::move(preprocessed.blank_lines);
-		clean_lines_ = std::move(preprocessed.clean_lines);
-		number_of_blank_lines_ = static_cast<int>(indices_of_blank_lines_.size());
-		number_of_good_lines_ = static_cast<int>(indices_of_good_lines_.size());
-		number_of_lines_ = number_of_blank_lines_ + number_of_good_lines_;
-	}
-
-	void DictionaryInputFile::Status(std::ostream &fOut) const
-	{ 
-		fOut << "Name:        " << file_name_.filename() << std::endl;
-		fOut << "Path:        " << file_name_.parent_path() << std::endl;
-		fOut << "Size:        " << std::filesystem::file_size(file_name_)/1000. << " kB" << std::endl;
-		fOut << "Lines:       " << number_of_lines_ << std::endl;
-		fOut << "Blank lines: " << number_of_blank_lines_ << std::endl;
-	}
-
+DictionaryInputFile::DictionaryInputFile(const std::string &file_name) {
+  auto preprocessed =
+      Lexer::read_and_preprocess_file(std::filesystem::path(file_name));
+  file_name_ = std::move(preprocessed.file_name);
+  indices_of_good_lines_ = std::move(preprocessed.indices_of_good_lines);
+  indices_of_blank_lines_ = std::move(preprocessed.indices_of_blank_lines);
+  good_lines_ = std::move(preprocessed.good_lines);
+  blank_lines_ = std::move(preprocessed.blank_lines);
+  clean_lines_ = std::move(preprocessed.clean_lines);
+  number_of_blank_lines_ = static_cast<int>(indices_of_blank_lines_.size());
+  number_of_good_lines_ = static_cast<int>(indices_of_good_lines_.size());
+  number_of_lines_ = number_of_blank_lines_ + number_of_good_lines_;
 }
+
+void DictionaryInputFile::Status(std::ostream &fOut) const {
+  std::error_code file_size_error;
+  const std::uintmax_t file_size =
+      std::filesystem::file_size(file_name_, file_size_error);
+
+  fOut << "Name:        " << file_name_.filename() << std::endl;
+  fOut << "Path:        " << file_name_.parent_path() << std::endl;
+  if (file_size_error)
+    fOut << "Size:        unavailable (" << file_size_error.message() << ")"
+         << std::endl;
+  else
+    fOut << "Size:        " << static_cast<double>(file_size) / 1000. << " kB"
+         << std::endl;
+  fOut << "Lines:       " << number_of_lines_ << std::endl;
+  fOut << "Blank lines: " << number_of_blank_lines_ << std::endl;
+}
+
+} // namespace OpenSMOKEpp

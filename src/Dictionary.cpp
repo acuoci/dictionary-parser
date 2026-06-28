@@ -94,8 +94,8 @@ void Dictionary::SetDictionary(std::vector<std::string> keywords,
 }
 
 void Dictionary::Summary(std::ostream &fout) const {
-  std::cout << "Dictionary " << name_ << " defined in file " << file_name_
-            << std::endl;
+  fout << "Dictionary " << name_ << " defined in file " << file_name_
+       << std::endl;
   for (unsigned int i = 0; i < keywords_.size(); i++)
     fout << keywords_[i] << "*" << options_[i] << "*" << starting_lines_[i]
          << "-" << ending_lines_[i] << std::endl;
