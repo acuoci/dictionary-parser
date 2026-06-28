@@ -143,10 +143,10 @@ namespace OpenSMOKEpp
 			return true;
 	}
 
-	int Dictionary::CheckOption(const std::string name_of_keyword, const DictionaryKeyWordTypes expected_type)
+	std::size_t Dictionary::CheckOption(const std::string name_of_keyword, const DictionaryKeyWordTypes expected_type)
 	{
-		const std::vector<std::string>::iterator it = find (keywords_.begin(), keywords_.end(), name_of_keyword);
-		
+		const std::vector<std::string>::iterator it = std::find(keywords_.begin(), keywords_.end(), name_of_keyword);
+
 		if (it == keywords_.end() )
 		{
 			std::string message = "The required keyword (" + name_of_keyword + ") is not present in the dictionary.";
@@ -155,7 +155,7 @@ namespace OpenSMOKEpp
 		}
 		else
 		{
-			size_t index = it-keywords_.begin();
+			const std::size_t index = static_cast<std::size_t>(it - keywords_.begin());
 
 			if ( grammar_.CheckType(name_of_keyword, expected_type) == false)
 			{
@@ -166,7 +166,7 @@ namespace OpenSMOKEpp
 				ErrorMessage(message);
 			}
 
-			return static_cast<int>(index);
+			return index;
 		}
 	}
 
@@ -423,6 +423,37 @@ namespace OpenSMOKEpp
 				std::stringstream line; line << starting_lines_[index];
 				std::string message = "Error in the keyword at line : " + line.str() + "\n";
 				message += "Failure in the character conversion.";
+				ErrorMessage(message);
+			}
+		}
+	}
+
+	void Dictionary::ReadOption(const std::string name_of_keyword, std::vector<bool>& values)
+	{
+		size_t index = CheckOption(name_of_keyword, VECTOR_BOOL);
+
+		const auto tokens = tokens_from(options_[index]);
+		if (tokens.empty())
+		{
+			std::stringstream line; line << starting_lines_[index];
+			std::string message = "Error in the keyword at line : " + line.str() + "\n";
+			message += "The required keyword (" + name_of_keyword + ") requires a list of booleans.";
+			ErrorMessage(message);
+		}
+
+		values.clear();
+		values.reserve(tokens.size());
+		for (const auto token : tokens)
+		{
+			if (token == "true" || token == "on")
+				values.push_back(true);
+			else if (token == "false" || token == "off")
+				values.push_back(false);
+			else
+			{
+				std::stringstream line; line << starting_lines_[index];
+				std::string message = "Error in the keyword at line : " + line.str() + "\n";
+				message += "Only boolean types can be accepted.";
 				ErrorMessage(message);
 			}
 		}

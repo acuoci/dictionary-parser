@@ -63,6 +63,9 @@ namespace OpenSMOKEpp
 
 	void DictionaryFile::Analyze()
 	{
+		if (lines_.empty())
+			ErrorMessage("The dictionary block is empty.");
+
 		// Recognize the name of the dictionary
 		{
 			lines_[0] = Lexer::trim_copy(lines_[0]);
@@ -116,7 +119,7 @@ namespace OpenSMOKEpp
 			const auto tokens = Lexer::split_whitespace(lines_[i_forward[0]]);
 			const std::size_t n = tokens.size();
 		
-			if (n != 1 && !tokens.empty() && tokens[0] != "{")
+			if (n != 1 || tokens[0] != "{")
 				ErrorMessage("The left hand curly bracket { is not specified correctly.");
 		}
 		// Check the curly braces
@@ -125,7 +128,7 @@ namespace OpenSMOKEpp
 			const auto tokens = Lexer::split_whitespace(lines_[i_backward[0]]);
 			const std::size_t n = tokens.size();
 		
-			if (n != 1 && !tokens.empty() && tokens[0] != "}")
+			if (n != 1 || tokens[0] != "}")
 				ErrorMessage("The right hand curly bracket } is not specified correctly.");
 		}
 
@@ -140,8 +143,11 @@ namespace OpenSMOKEpp
 				}
 			}
 
+			if (good_lines_.empty())
+				ErrorMessage("No keyword entries are specified inside the dictionary block.");
+
 			good_lines_[0] = Lexer::trim_copy(good_lines_[0]);
-			if (good_lines_[0].at(0) != '@')
+			if (good_lines_[0].empty() || good_lines_[0].front() != '@')
 			{
 				std::stringstream line_index; line_index << indices_of_good_lines_[0];
 				std::string message = "The line " + line_index.str() + " is not written correctly. Remember that a keyword must be preceeded by the @ character.";
@@ -161,6 +167,9 @@ namespace OpenSMOKEpp
 				}
 			}
 			i_start_.push_back(static_cast<unsigned int>(good_lines_.size()));
+
+			if (n_start == 0)
+				ErrorMessage("No keyword entries starting with @ are specified inside the dictionary block.");
 
 			extended_lines_.resize(n_start);
 			for(unsigned int i=0;i<n_start;i++)
@@ -234,6 +243,9 @@ namespace OpenSMOKEpp
 
 	void DictionaryFile::Transfer(Dictionary& dictionary)
 	{
+		if (i_start_.size() != extended_lines_.size() + 1)
+			ErrorMessage("Internal parsing error: inconsistent keyword line mapping.");
+
 		std::vector<std::string> keywords(extended_lines_.size());
 		std::vector<std::string> options(extended_lines_.size());
 		std::vector<unsigned int> startingline(extended_lines_.size());
@@ -241,8 +253,14 @@ namespace OpenSMOKEpp
 		for(unsigned int i=0;i<extended_lines_.size();i++)
 		{
 			const auto tokens = Lexer::split_whitespace(extended_lines_[i]);
-				
-			unsigned int count = 0; 
+
+			if (tokens.empty())
+				ErrorMessage("Internal parsing error: empty compacted keyword entry.");
+
+			if (i_start_[i] >= indices_of_good_lines_.size() || i_start_[i + 1] == 0 || i_start_[i + 1] - 1 >= indices_of_good_lines_.size())
+				ErrorMessage("Internal parsing error: keyword source-line index out of range.");
+
+			unsigned int count = 0;
 			for (const auto token : tokens)
 			{
 				if (count == 0) keywords[i] = std::string(token);

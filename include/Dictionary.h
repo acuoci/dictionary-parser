@@ -36,6 +36,7 @@
 #ifndef OpenSMOKEpp_Dictionary_H
 #define	OpenSMOKEpp_Dictionary_H
 
+#include <cstddef>
 #include <filesystem>
 #include <iosfwd>
 #include <iostream>
@@ -244,12 +245,12 @@ namespace OpenSMOKEpp
 		/**
 		 * \brief Reads a vector of boolean tokens.
 		 *
-		 * \param[in] option Keyword selector.
+		 * \param[in] option Keyword name including leading `@`.
 		 * \param[out] value Parsed boolean vector.
-		 * \warning This overload is declared for API compatibility; verify
-		 * implementation availability before using it.
+		 * \warning Throws if the option is empty or any token is not one of
+		 * `true`, `false`, `on`, or `off`.
 		 */
-		void ReadOption(const bool option, std::vector<bool>& value);
+		void ReadOption(const std::string option, std::vector<bool>& value);
 
 		/**
 		 * \brief Reads repeated string/floating-point pairs.
@@ -331,7 +332,7 @@ namespace OpenSMOKEpp
 		 * different grammar type.
 		 * \note This function is `[[nodiscard]]`.
 		 */
-		[[nodiscard]] int CheckOption(const std::string name_of_keyword, const DictionaryKeyWordTypes expected_type);
+		[[nodiscard]] std::size_t CheckOption(const std::string name_of_keyword, const DictionaryKeyWordTypes expected_type);
 
 		/**
 		 * \brief Raises a dictionary-scoped error.

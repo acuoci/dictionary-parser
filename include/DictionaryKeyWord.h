@@ -230,13 +230,13 @@ namespace OpenSMOKEpp
 		std::string type_ascii_;
 
 		/** \brief Expected value type. */
-		DictionaryKeyWordTypes type_;
+		DictionaryKeyWordTypes type_ = NONE;
 
 		/** \brief Short diagnostic comment. */
 		std::string comment_short_;
 
 		/** \brief Whether the keyword is compulsory. */
-		bool is_compulsory_;
+		bool is_compulsory_ = false;
 
 		/** \brief Alternative keywords satisfying the same compulsory rule. */
 		std::vector<std::string> compulsory_alternatives_;

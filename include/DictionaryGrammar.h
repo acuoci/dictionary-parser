@@ -172,7 +172,7 @@ namespace OpenSMOKEpp
 		[[nodiscard]] bool CheckType(const std::string keyword_name, const DictionaryKeyWordTypes expected_type);
 
 		/** \brief Number of keyword rules in `keywords_`. */
-		unsigned int number_of_keywords_;
+		unsigned int number_of_keywords_ = 0;
 
 		/** \brief Keyword rules defined by this grammar. */
 		std::vector<DictionaryKeyWord> keywords_;
