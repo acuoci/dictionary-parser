@@ -56,3 +56,21 @@ add_test(
 	NAME Test_Example_Input_2
 	COMMAND test_parser_smoke "${CMAKE_CURRENT_SOURCE_DIR}/examples/input.2.dic"
 )
+
+add_executable(test_three_equations_grammar
+	tests/test_three_equations_grammar.cpp
+)
+
+target_link_libraries(test_three_equations_grammar
+	PRIVATE
+		DictionaryParser::dictionary_parser
+)
+
+set_target_properties(test_three_equations_grammar PROPERTIES
+	CXX_EXTENSIONS OFF
+)
+
+add_test(
+	NAME Test_Example_Input_3_ThreeEquations_Grammar
+	COMMAND test_three_equations_grammar "${CMAKE_CURRENT_SOURCE_DIR}/examples/input3.dic"
+)
