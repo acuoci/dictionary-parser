@@ -1,4 +1,4 @@
-# OpenSMOKE++ Dictionary Parser
+# OpenSMOKE++ Style Dictionary Parser
 
 **A standalone, high-performance, modern C++ library for parsing and processing structured input files according to rigorous dictionary syntax rules.**
 
