@@ -15,7 +15,7 @@ OpenSMOKE++ Dictionary Parser provides a compact parser for `Dictionary ... { ..
 | Syntax | Inline dictionaries, `#include`, quoted strings, flexible brace placement |
 | Units | Dimensions declared in the grammar; units in the input checked and converted to SI automatically |
 | Validation | Grammar layer for required keywords, conflicts, alternatives, and typed reads, with a coherence analysis of the grammar itself |
-| Error handling | Standard exceptions; all problems reported together, `file:line:column` locations, "did you mean" suggestions; nothing printed by the library |
+| Error handling | `DictionaryError` with structured diagnostics; all problems reported together, compiler-style messages with source excerpts, "did you mean" suggestions; nothing printed by the library |
 | Tests | Unit tests, integration tests over `examples/`, optional corpus test |
 | Documentation | Public headers documented with Doxygen comments |
 | License | GNU General Public License v3 |
@@ -116,93 +116,55 @@ example.
 
 ### Diagnostics
 
-Syntax errors are thrown as `OpenSMOKEpp::Lexer::SyntaxError` (derived from
-`std::runtime_error`), which also exposes the file, line and column:
+Every error about an input file, a grammar or a read is thrown as an
+`OpenSMOKEpp::DictionaryError` (derived from `std::runtime_error`). It carries
+a list of structured `Diagnostic`s (severity, code, location, message, hint,
+related notes), and `what()` renders them in compiler style, with the source
+line and a marker under the offending token:
 
 ```text
-input.dic:23:5: error: unexpected keyword @Pressure: missing ';' at the end of keyword @Temperature (line 22)
+Dictionary flame defined in file flame.dic: 3 errors found
+flame.dic:3:2: error: the keyword @Temprature is not recognized in this dictionary
+    3 |  @Temprature  300 K;
+      |  ^~~~~~~~~~~
+      = hint: did you mean @Temperature?
+flame.dic:6:2: error: the keywords @Lean and @Rich are mutually exclusive and cannot be used together
+    6 |  @Rich  true;
+      |  ^~~~~
+flame.dic:5:2: note: @Lean is specified here
+    5 |  @Lean  true;
+      |  ^~~~~
+flame.dic:4:20: error: keyword @Velocity: units 'K' (temperature [K]) are not compatible with the expected velocity [m/s]
+    4 |  @Velocity    19.5 K;
+      |                    ^
 ```
 
-Grammar validation reports every problem at once in a single exception:
-
-```text
-Dictionary initial-mixture defined in file input.dic: 2 errors found:
-  - the keyword @Temprature is not recognized in this dictionary (did you mean @Temperature?)
-  - the compulsory keyword @Temperature is missing
-```
-
-## Quick Start
-
-The example below parses `examples/input.1.dic`, retrieves the `dae-parameters` dictionary, applies a minimal grammar, and reads typed values safely.
+- Validation reports **all** problems at once; a missing keyword points at
+  the dictionary name, a conflict points at the later keyword with a note on
+  the earlier one, value and unit errors point at the exact token.
+- Errors raised while reading (`ReadInt`, `ReadMeasure`, ...) have the same
+  form, because each dictionary keeps a shared copy of its source text.
+- Programs can inspect the diagnostics instead of parsing text:
 
 ```cpp
-#include "Dictionary.h"
-#include "DictionaryGrammar.h"
-#include "DictionaryKeyWord.h"
-#include "DictionaryManager.h"
-
-#include <exception>
-#include <iostream>
-#include <string>
-
-class DaeParametersGrammar final : public OpenSMOKEpp::DictionaryGrammar
-{
-protected:
-    void DefineRules() override
-    {
-        AddKeyWord(OpenSMOKEpp::DictionaryKeyWord(
-            "@DaeSolver",
-            OpenSMOKEpp::SINGLE_STRING,
-            "DAE solver name",
-            false));
-
-        AddKeyWord(OpenSMOKEpp::DictionaryKeyWord(
-            "@RelativeTolerance",
-            OpenSMOKEpp::SINGLE_DOUBLE,
-            "Relative tolerance",
-            false));
-
-        AddKeyWord(OpenSMOKEpp::DictionaryKeyWord(
-            "@AbsoluteTolerance",
-            OpenSMOKEpp::SINGLE_DOUBLE,
-            "Absolute tolerance",
-            false));
-    }
-};
-
-int main()
-{
-    try
-    {
-        OpenSMOKEpp::DictionaryManager manager;
-        manager.ReadDictionariesFromFile("examples/input.1.dic");
-
-        auto& dae = manager("dae-parameters");
-
-        DaeParametersGrammar grammar;
-        dae.SetGrammar(grammar);
-
-        std::string solver;
-        double relative_tolerance = 0.0;
-        double absolute_tolerance = 0.0;
-
-        dae.ReadString("@DaeSolver", solver);
-        dae.ReadDouble("@RelativeTolerance", relative_tolerance);
-        dae.ReadDouble("@AbsoluteTolerance", absolute_tolerance);
-
-        std::cout << "Solver: " << solver << '\n';
-        std::cout << "Relative tolerance: " << relative_tolerance << '\n';
-        std::cout << "Absolute tolerance: " << absolute_tolerance << '\n';
-    }
-    catch (const std::exception& error)
-    {
-        std::cerr << "Dictionary parsing failed: " << error.what() << '\n';
-        return 1;
-    }
-
-    return 0;
+try {
+    dictionary.SetGrammar(grammar);
+} catch (const OpenSMOKEpp::DictionaryError& error) {
+    for (const auto& d : error.diagnostics())
+        if (d.code == OpenSMOKEpp::DiagnosticCode::UnknownKeyword)
+            std::cerr << d.location.line << ": " << d.message << " (" << d.hint << ")\n";
 }
 ```
+
+- Codes: `syntax`, `include`, `duplicate-dictionary`, `unknown-keyword`,
+  `missing-compulsory`, `alternative-group`, `missing-required`, `conflict`,
+  `help-requested`, `invalid-value`, `invalid-unit`, and, for mistakes in the
+  calling code, `no-grammar`, `undeclared-keyword`, `wrong-type`,
+  `missing-keyword`, `wrong-dimension`, `grammar-incoherent`.
+- Syntax errors are `Lexer::SyntaxError`, a `DictionaryError` that also
+  exposes `file_name()`, `line()`, `column()` and `message()`.
+- `Dictionary::entries()` gives the parsed entries (keyword, values, token
+  positions) and `location_of(keyword)` the position of a keyword.
 
 ### Grammar Coherence
 
@@ -373,8 +335,8 @@ ctest --output-on-failure
 ```
 
 - `Unit_*`: lexer, syntax, `#include`, typed reads, grammar coherence,
-  dictionary validation, units and measures (`unit_tests [suite...]` runs
-  selected suites).
+  dictionary validation, units, measures and diagnostics
+  (`unit_tests [suite...]` runs selected suites).
 - `Test_Example_*`: parse the input files in `examples/`, including a
   grammar-aware test for `input3.dic`.
 - `Test_Corpus`: parses every `*.dic` file below `DICTIONARY_PARSER_CORPUS_DIR`
@@ -410,6 +372,7 @@ Then include public headers:
 | `DictionaryKeyWord.h` | Keyword metadata, expected value types and dimensions |
 | `DictionaryUnits.h` | Dimensions, unit parsing and conversion to SI |
 | `DictionaryInputFile.h` | Preprocessed input-file representation |
+| `DictionaryDiagnostics.h` | `Diagnostic`, `DictionaryError`, source locations and rendering |
 | `DictionaryLexer.h` | Tokenizer, `SyntaxError`, and low-level lexical utilities |
 
 ## Examples

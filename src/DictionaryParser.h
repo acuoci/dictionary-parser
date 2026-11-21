@@ -36,9 +36,13 @@
 #ifndef OpenSMOKEpp_DictionaryParser_H
 #define OpenSMOKEpp_DictionaryParser_H
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "DictionaryDiagnostics.h"
+#include "DictionaryLexer.h"
 
 namespace OpenSMOKEpp::detail {
 /**
@@ -49,6 +53,8 @@ struct ParsedEntry {
   std::string keyword;
   /** \brief Value tokens (unquoted text). */
   std::vector<std::string> values;
+  /** \brief Value tokens with their positions (same order as `values`). */
+  std::vector<Lexer::Token> tokens;
   /** \brief Value tokens as written, joined by single blanks. */
   std::string option;
   /** \brief 1-based line of the keyword. */
@@ -67,6 +73,10 @@ struct ParsedDictionary {
   std::string name;
   /** \brief 1-based line of the `Dictionary` header (or inline keyword). */
   unsigned int line = 0;
+  /** \brief 1-based column of the dictionary name (or inline keyword). */
+  unsigned int column = 0;
+  /** \brief Length of the highlighted name. */
+  unsigned int length = 0;
   /** \brief Entries in source order. */
   std::vector<ParsedEntry> entries;
 };
@@ -109,13 +119,12 @@ struct ParsedSource {
  * becomes a dictionary named `parent/Key`, and the entry value is that
  * name, so it is read with `Dictionary::ReadDictionary` like any reference.
  *
- * \param[in] source Full source text.
- * \param[in] file_name File name used in diagnostics.
+ * \param[in] source Shared source file (name and text).
  * \return Parsed dictionaries and include directives.
  * \warning Throws `Lexer::SyntaxError` on any lexical or syntax error.
  */
-[[nodiscard]] auto parse_source(std::string_view source,
-                                std::string_view file_name) -> ParsedSource;
+[[nodiscard]] auto parse_source(const std::shared_ptr<const SourceFile> &source)
+    -> ParsedSource;
 } // namespace OpenSMOKEpp::detail
 
 #endif // OpenSMOKEpp_DictionaryParser_H

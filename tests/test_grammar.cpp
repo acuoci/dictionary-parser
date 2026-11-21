@@ -201,7 +201,8 @@ TEST_CASE("grammar", "all problems are reported together") {
     CHECK(false);
   } catch (const std::exception &error) {
     const std::string what = error.what();
-    CHECK(what.starts_with("Grammar of dictionary d: 3 problems found:"));
+    CHECK(what.starts_with("Grammar of dictionary d: 3 errors found\n"));
+    CHECK(what.find("error: the keyword @A lists itself") != std::string::npos);
     CHECK(what.find("undefined keyword @Q") != std::string::npos);
     CHECK(what.find("@A lists itself") != std::string::npos);
     CHECK(what.find("@B lists itself") != std::string::npos);
@@ -241,23 +242,64 @@ TEST_CASE("validation", "every violation is reported, with suggestions") {
             kw("@Lean", SINGLE_BOOL, false, "none", "none", "@Rich"),
             kw("@Rich", SINGLE_BOOL, false, "none", "none", "@Lean")});
     CHECK(false);
-  } catch (const std::exception &error) {
+  } catch (const DictionaryError &error) {
     const std::string what = error.what();
-    CHECK(what.find("Dictionary d defined in file test.dic: 5 errors found:") !=
+    CHECK(what.starts_with("Dictionary d defined in file test.dic: 5 errors "
+                           "found\n"));
+    CHECK(error.error_count() == 5);
+    const auto find = [&error](DiagnosticCode code) -> const Diagnostic * {
+      for (const auto &diagnostic : error.diagnostics())
+        if (diagnostic.code == code && diagnostic.severity == Severity::Error)
+          return &diagnostic;
+      return nullptr;
+    };
+
+    const Diagnostic *unknown = find(DiagnosticCode::UnknownKeyword);
+    REQUIRE(unknown != nullptr);
+    CHECK(unknown->message ==
+          "the keyword @Temprature is not recognized in this dictionary");
+    CHECK(unknown->hint == "did you mean @Temperature?");
+    CHECK(unknown->location.line == 3);
+    CHECK(unknown->location.column == 3);
+    CHECK(unknown->location.length == 11);
+
+    const Diagnostic *missing = find(DiagnosticCode::MissingCompulsory);
+    REQUIRE(missing != nullptr);
+    CHECK(missing->message == "the compulsory keyword @Temperature is missing");
+    CHECK(missing->location.line == 1); // the dictionary name
+    CHECK(missing->location.column == 12);
+
+    const Diagnostic *group = find(DiagnosticCode::AlternativeGroup);
+    REQUIRE(group != nullptr);
+    CHECK(group->message.starts_with(
+        "only one of the mutually exclusive keywords @MassFractions, "
+        "@MoleFractions can be specified"));
+    CHECK(group->location.line == 5);
+    REQUIRE(group->notes.size() == 1);
+    CHECK(group->notes[0].location.line == 4);
+
+    const Diagnostic *required = find(DiagnosticCode::MissingRequired);
+    REQUIRE(required != nullptr);
+    CHECK(required->message ==
+          "the keyword @Fuel requires @Oxidizer, which is missing");
+    CHECK(required->location.line == 6);
+
+    const Diagnostic *conflict = find(DiagnosticCode::Conflict);
+    REQUIRE(conflict != nullptr);
+    CHECK(conflict->message == "the keywords @Lean and @Rich are mutually "
+                               "exclusive and cannot be used together");
+    CHECK(conflict->location.line == 8);
+    REQUIRE(conflict->notes.size() == 1);
+    CHECK(conflict->notes[0].message == "@Lean is specified here");
+    CHECK(conflict->notes[0].location.line == 7);
+
+    CHECK(what.find("test.dic:3:3: error: the keyword @Temprature is not "
+                    "recognized in this dictionary\n"
+                    "    3 |   @Temprature 300 K;\n"
+                    "      |   ^~~~~~~~~~~\n"
+                    "      = hint: did you mean @Temperature?") !=
           std::string::npos);
-    CHECK(what.find("the keyword @Temprature is not recognized in this "
-                    "dictionary (did you mean @Temperature?)") !=
-          std::string::npos);
-    CHECK(what.find("the compulsory keyword @Temperature is missing") !=
-          std::string::npos);
-    CHECK(what.find("only one of the mutually exclusive keywords "
-                    "@MassFractions, @MoleFractions can be specified") !=
-          std::string::npos);
-    CHECK(what.find("the keyword @Fuel requires @Oxidizer, which is missing") !=
-          std::string::npos);
-    CHECK(what.find("the keywords @Lean and @Rich are mutually exclusive") !=
-          std::string::npos);
-    CHECK(what.find("List of available options in Dictionary d") !=
+    CHECK(what.find("note: keywords accepted by this dictionary:") !=
           std::string::npos);
   }
   CHECK(capture.text().empty());

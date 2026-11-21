@@ -35,6 +35,7 @@
 
 #include "DictionaryGrammar.h"
 #include "DictionaryLexer.h"
+#include "DictionaryUtilities.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -52,29 +53,6 @@ namespace OpenSMOKEpp {
 namespace {
 constexpr std::size_t none = static_cast<std::size_t>(-1);
 
-[[nodiscard]] auto lower(const char c) noexcept -> char {
-  return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-}
-
-// Case-insensitive Levenshtein distance.
-[[nodiscard]] auto edit_distance(const std::string_view a,
-                                 const std::string_view b) -> std::size_t {
-  std::vector<std::size_t> previous(b.size() + 1);
-  std::vector<std::size_t> current(b.size() + 1);
-  for (std::size_t j = 0; j <= b.size(); ++j)
-    previous[j] = j;
-  for (std::size_t i = 1; i <= a.size(); ++i) {
-    current[0] = i;
-    for (std::size_t j = 1; j <= b.size(); ++j) {
-      const std::size_t cost = lower(a[i - 1]) == lower(b[j - 1]) ? 0 : 1;
-      current[j] = std::min({previous[j] + 1, current[j - 1] + 1,
-                             previous[j - 1] + cost});
-    }
-    std::swap(previous, current);
-  }
-  return previous[b.size()];
-}
-
 [[nodiscard]] auto join(const std::vector<std::string> &names)
     -> std::string {
   std::string result;
@@ -86,24 +64,22 @@ constexpr std::size_t none = static_cast<std::size_t>(-1);
   return result;
 }
 
-[[nodiscard]] auto format_problems(const std::vector<std::string> &problems)
-    -> std::string {
-  std::string message = std::to_string(problems.size()) +
-                        (problems.size() == 1 ? " problem" : " problems") +
-                        " found:";
-  for (const auto &problem : problems)
-    message += "\n  - " + problem;
-  return message;
-}
 } // namespace
 
-void DictionaryGrammar::ErrorMessage(std::string_view message) const {
-  std::string prefix = "Grammar";
+auto DictionaryGrammar::Context() const -> std::string {
+  std::string context = "Grammar";
   if (!name_.empty())
-    prefix += " of dictionary " + name_;
+    context += " of dictionary " + name_;
   if (!file_name_.empty())
-    prefix += " (file " + file_name_.filename().string() + ")";
-  throw std::runtime_error(prefix + ": " + std::string(message));
+    context += " (file " + file_name_.filename().string() + ")";
+  return context;
+}
+
+void DictionaryGrammar::ErrorMessage(std::string_view message) const {
+  Diagnostic diagnostic;
+  diagnostic.code = DiagnosticCode::GrammarIncoherent;
+  diagnostic.message = std::string(message);
+  throw DictionaryError({std::move(diagnostic)}, Context());
 }
 
 void DictionaryGrammar::DefineRules() {
@@ -137,16 +113,22 @@ void DictionaryGrammar::ReadFromFile(std::string_view file_name) {
 
   std::ifstream fInput(file_name_);
   if (!fInput.is_open())
-    throw std::runtime_error("Unable to open grammar file: " +
-                             file_name_.string());
+    throw DictionaryError(
+        {Diagnostic{Severity::Error, DiagnosticCode::Other,
+                    SourceLocation{nullptr, file_name_.string(), 0, 0, 0},
+                    "unable to open the grammar file", {}, {}}},
+        Context());
 
   std::vector<std::string> lines;
   std::string line;
   while (std::getline(fInput, line))
     lines.push_back(line);
   if (fInput.bad())
-    throw std::runtime_error("I/O error while reading grammar file: " +
-                             file_name_.string());
+    throw DictionaryError(
+        {Diagnostic{Severity::Error, DiagnosticCode::Other,
+                    SourceLocation{nullptr, file_name_.string(), 0, 0, 0},
+                    "I/O error while reading the grammar file", {}, {}}},
+        Context());
 
   std::vector<std::size_t> line_keywords;
   for (std::size_t i = 0; i < lines.size(); i++) {
@@ -193,8 +175,17 @@ void DictionaryGrammar::Check() {
   const std::size_t n = keywords_.size();
   std::vector<std::string> problems;
   const auto fail_if_any = [&]() {
-    if (!problems.empty())
-      ErrorMessage(format_problems(problems));
+    if (problems.empty())
+      return;
+    std::vector<Diagnostic> diagnostics;
+    diagnostics.reserve(problems.size());
+    for (auto &problem : problems) {
+      Diagnostic diagnostic;
+      diagnostic.code = DiagnosticCode::GrammarIncoherent;
+      diagnostic.message = std::move(problem);
+      diagnostics.push_back(std::move(diagnostic));
+    }
+    throw DictionaryError(std::move(diagnostics), Context());
   };
 
   // 1. Names, duplicates, types ------------------------------------------
@@ -517,45 +508,48 @@ bool DictionaryGrammar::HasHelpKeyWord(
                    "@Help") != list_of_keywords.end();
 }
 
-std::vector<std::string> DictionaryGrammar::CollectUndefinedKeyWords(
-    const std::vector<std::string> &list_of_keywords) const {
-  std::vector<std::string> messages;
+auto DictionaryGrammar::CollectUndefinedKeyWords(
+    const std::vector<std::string> &list_of_keywords) const
+    -> std::vector<Violation> {
+  std::vector<Violation> violations;
   for (const auto &keyword : list_of_keywords) {
     if (FindKeyWord(keyword) != nullptr)
       continue;
-    std::string message =
+    Violation violation;
+    violation.code = DiagnosticCode::UnknownKeyword;
+    violation.message =
         "the keyword " + keyword + " is not recognized in this dictionary";
-    std::size_t best = none;
-    const DictionaryKeyWord *suggestion = nullptr;
-    for (const auto &candidate : keywords_) {
-      const std::size_t distance = edit_distance(keyword, candidate.name());
-      if (distance < best) {
-        best = distance;
-        suggestion = &candidate;
-      }
-    }
-    const std::size_t threshold = std::max<std::size_t>(2, keyword.size() / 4);
-    if (suggestion != nullptr && best <= threshold)
-      message += " (did you mean " + suggestion->name() + "?)";
-    messages.push_back(std::move(message));
+    violation.keyword = keyword;
+    const std::string suggestion =
+        detail::closest_match(keyword, list_of_keywords_names_);
+    if (!suggestion.empty())
+      violation.hint = "did you mean " + suggestion + "?";
+    violations.push_back(std::move(violation));
   }
-  return messages;
+  return violations;
 }
 
-std::vector<std::string> DictionaryGrammar::CollectCompulsoryErrors(
-    const std::vector<std::string> &list_of_keywords) const {
-  const std::unordered_set<std::string_view> present(list_of_keywords.begin(),
-                                                     list_of_keywords.end());
-  std::vector<std::string> messages;
+auto DictionaryGrammar::CollectCompulsoryErrors(
+    const std::vector<std::string> &list_of_keywords) const
+    -> std::vector<Violation> {
+  std::vector<Violation> violations;
   std::set<std::vector<std::string>> reported_groups;
+  const auto present = [&list_of_keywords](const std::string &name) {
+    return std::find(list_of_keywords.begin(), list_of_keywords.end(),
+                     name) != list_of_keywords.end();
+  };
 
   for (const auto &keyword : keywords_) {
     if (!keyword.is_compulsory())
       continue;
     if (keyword.compulsory_alternatives().empty()) {
-      if (!present.contains(keyword.name()))
-        messages.push_back("the compulsory keyword " + keyword.name() +
-                           " is missing");
+      if (!present(keyword.name()))
+        violations.push_back(Violation{
+            DiagnosticCode::MissingCompulsory,
+            "the compulsory keyword " + keyword.name() + " is missing",
+            {},
+            {},
+            {}});
       continue;
     }
 
@@ -565,57 +559,89 @@ std::vector<std::string> DictionaryGrammar::CollectCompulsoryErrors(
     if (!reported_groups.insert(group).second)
       continue;
 
+    // Members found, in the order in which they appear in the dictionary.
     std::vector<std::string> found;
-    for (const auto &member : group)
-      if (present.contains(member))
-        found.push_back(member);
-    if (found.empty())
-      messages.push_back("one of the compulsory keywords " + join(group) +
-                         " must be specified");
-    else if (found.size() > 1)
-      messages.push_back("only one of the mutually exclusive keywords " +
-                         join(group) + " can be specified, but " +
-                         join(found) + " are present");
+    for (const auto &name : list_of_keywords)
+      if (std::find(group.begin(), group.end(), name) != group.end())
+        found.push_back(name);
+
+    if (found.empty()) {
+      violations.push_back(Violation{DiagnosticCode::AlternativeGroup,
+                                     "one of the compulsory keywords " +
+                                         join(group) + " must be specified",
+                                     {},
+                                     {},
+                                     {}});
+    } else if (found.size() > 1) {
+      Violation violation;
+      violation.code = DiagnosticCode::AlternativeGroup;
+      violation.message = "only one of the mutually exclusive keywords " +
+                          join(group) + " can be specified, but " +
+                          join(found) + " are present";
+      violation.keyword = found.back();
+      for (std::size_t i = 0; i + 1 < found.size(); ++i)
+        violation.related.emplace_back(found[i], found[i] +
+                                                     " is specified here");
+      violations.push_back(std::move(violation));
+    }
   }
-  return messages;
+  return violations;
 }
 
-std::vector<std::string> DictionaryGrammar::CollectRequiredErrors(
-    const std::vector<std::string> &list_of_keywords) const {
+auto DictionaryGrammar::CollectRequiredErrors(
+    const std::vector<std::string> &list_of_keywords) const
+    -> std::vector<Violation> {
   const std::unordered_set<std::string_view> present(list_of_keywords.begin(),
                                                      list_of_keywords.end());
-  std::vector<std::string> messages;
+  std::vector<Violation> violations;
   for (const auto &keyword : keywords_) {
     if (!present.contains(keyword.name()))
       continue;
     for (const auto &required : keyword.required_keywords())
       if (!present.contains(required))
-        messages.push_back("the keyword " + keyword.name() + " requires " +
-                           required + ", which is missing");
+        violations.push_back(Violation{DiagnosticCode::MissingRequired,
+                                       "the keyword " + keyword.name() +
+                                           " requires " + required +
+                                           ", which is missing",
+                                       keyword.name(),
+                                       {},
+                                       {}});
   }
-  return messages;
+  return violations;
 }
 
-std::vector<std::string> DictionaryGrammar::CollectConflictErrors(
-    const std::vector<std::string> &list_of_keywords) const {
-  const std::unordered_set<std::string_view> present(list_of_keywords.begin(),
-                                                     list_of_keywords.end());
-  std::vector<std::string> messages;
+auto DictionaryGrammar::CollectConflictErrors(
+    const std::vector<std::string> &list_of_keywords) const
+    -> std::vector<Violation> {
+  const auto position = [&list_of_keywords](const std::string &name) {
+    return std::find(list_of_keywords.begin(), list_of_keywords.end(), name) -
+           list_of_keywords.begin();
+  };
+  std::vector<Violation> violations;
   std::set<std::pair<std::string, std::string>> reported;
   for (const auto &keyword : keywords_) {
-    if (!present.contains(keyword.name()))
+    const auto first = position(keyword.name());
+    if (first == static_cast<std::ptrdiff_t>(list_of_keywords.size()))
       continue;
     for (const auto &conflicting : keyword.conflicting_keywords()) {
-      if (!present.contains(conflicting))
+      const auto second = position(conflicting);
+      if (second == static_cast<std::ptrdiff_t>(list_of_keywords.size()))
         continue;
-      auto pair = std::minmax(keyword.name(), conflicting);
-      if (reported.emplace(pair.first, pair.second).second)
-        messages.push_back("the keywords " + pair.first + " and " +
-                           pair.second +
-                           " are mutually exclusive and cannot be used "
-                           "together");
+      const auto pair = std::minmax(keyword.name(), conflicting);
+      if (!reported.emplace(pair.first, pair.second).second)
+        continue;
+      // Point at the keyword that appears last; the other one is a note.
+      const std::string &later = first > second ? keyword.name() : conflicting;
+      const std::string &earlier = first > second ? conflicting : keyword.name();
+      violations.push_back(Violation{
+          DiagnosticCode::Conflict,
+          "the keywords " + pair.first + " and " + pair.second +
+              " are mutually exclusive and cannot be used together",
+          later,
+          {},
+          {{earlier, earlier + " is specified here"}}});
     }
   }
-  return messages;
+  return violations;
 }
 } // namespace OpenSMOKEpp

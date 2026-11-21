@@ -103,12 +103,26 @@ namespace {
 }
 } // namespace
 
+namespace {
+[[nodiscard]] auto make_location(std::string file_name, const unsigned int line,
+                                 const unsigned int column) -> SourceLocation {
+  SourceLocation location;
+  location.file_name = std::move(file_name);
+  location.line = line;
+  location.column = column;
+  location.length = 1;
+  return location;
+}
+} // namespace
+
+SyntaxError::SyntaxError(SourceLocation location, const std::string &message,
+                         const DiagnosticCode code)
+    : DictionaryError({Diagnostic{Severity::Error, code, std::move(location),
+                                  message, {}, {}}}) {}
+
 SyntaxError::SyntaxError(std::string file_name, const unsigned int line,
                          const unsigned int column, const std::string &message)
-    : std::runtime_error(file_name + ":" + std::to_string(line) + ":" +
-                         std::to_string(column) + ": error: " + message),
-      file_name_(std::move(file_name)), line_(line), column_(column),
-      message_(message) {}
+    : SyntaxError(make_location(std::move(file_name), line, column), message) {}
 
 auto trim(const std::string_view text) noexcept -> std::string_view {
   std::size_t first = 0;
@@ -272,7 +286,25 @@ auto read_and_preprocess_file(const std::filesystem::path &file_name)
 }
 auto tokenize(const std::string_view source, const std::string_view file_name)
     -> std::vector<Token> {
-  const std::string file(file_name);
+  return tokenize(std::make_shared<const SourceFile>(std::string(file_name),
+                                                     std::string(source)));
+}
+
+auto tokenize(const std::shared_ptr<const SourceFile> &shared_source)
+    -> std::vector<Token> {
+  const std::string_view source = shared_source->text();
+  const auto error_at = [&shared_source](const unsigned int at_line,
+                                         const unsigned int at_column,
+                                         const unsigned int length,
+                                         const std::string &message) {
+    SourceLocation location;
+    location.source = shared_source;
+    location.file_name = shared_source->name();
+    location.line = at_line;
+    location.column = at_column;
+    location.length = length;
+    return SyntaxError(std::move(location), message);
+  };
   std::vector<Token> tokens;
   tokens.reserve(source.size() / 4);
 
@@ -351,12 +383,13 @@ auto tokenize(const std::string_view source, const std::string_view file_name)
         text += d;
       }
       if (!closed)
-        throw SyntaxError(file, token_line, token_column,
-                          "unterminated quoted string: the closing '\"' must "
-                          "be on the same line");
+        throw error_at(token_line, token_column,
+                       static_cast<unsigned int>(spelling.size()),
+                       "unterminated quoted string: the closing '\"' must "
+                       "be on the same line");
       if (i < source.size() && !is_space(source[i]) &&
           !is_delimiter(source[i]) && !starts_comment(source, i))
-        throw SyntaxError(file, line, column,
+        throw error_at(line, column, 1,
                           "unexpected " + describe(source[i]) +
                               " right after a quoted string: separate the "
                               "values with a blank");
@@ -369,7 +402,7 @@ auto tokenize(const std::string_view source, const std::string_view file_name)
     while (i < source.size() && !is_space(source[i]) &&
            !is_delimiter(source[i])) {
       if (source[i] == '"')
-        throw SyntaxError(file, line, column,
+        throw error_at(line, column, 1,
                           "unexpected '\"' inside the word '" + word +
                               "': a quoted string must start at the "
                               "beginning of a value");

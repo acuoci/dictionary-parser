@@ -137,13 +137,13 @@ TEST_CASE("reads", "value errors name the line and the keyword") {
   std::vector<std::string> names;
   std::vector<double> values;
   CHECK_THROWS_WITH(d.ReadInt("@BadInt", i),
-                    "line 16, keyword @BadInt: an integer is required, but "
-                    "'4.2' was given");
+                    "test.dic:16:13: error: keyword @BadInt: an integer is "
+                    "required, but '4.2' was given");
   CHECK_THROWS_WITH(d.ReadBool("@BadBool", flag),
                     "a boolean (true/false/on/off) is required, but 'maybe'");
   CHECK_THROWS_WITH(d.ReadDouble("@TwoDoubles", x),
-                    "line 18: the keyword @TwoDoubles requires exactly one "
-                    "number (double), but 2 values were given");
+                    "test.dic:18:3: error: keyword @TwoDoubles: requires "
+                    "exactly one number (double), but 2 values were given");
   CHECK_THROWS_WITH(d.ReadDouble("@NaN", x), "requires a finite number");
   CHECK_THROWS_WITH(d.ReadOption("@Odd", names, values),
                     "pairs of a name and a number (double) are required");

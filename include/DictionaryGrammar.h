@@ -41,8 +41,10 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#include "DictionaryDiagnostics.h"
 #include "DictionaryKeyWord.h"
 
 namespace OpenSMOKEpp {
@@ -145,6 +147,24 @@ private:
   std::filesystem::path file_name_;
 
   /**
+   * \brief One violation of a grammar rule by a dictionary.
+   *
+   * The dictionary turns it into a located `Diagnostic`.
+   */
+  struct Violation {
+    /** \brief Category. */
+    DiagnosticCode code = DiagnosticCode::Other;
+    /** \brief Description. */
+    std::string message;
+    /** \brief Keyword to point at; empty for the dictionary as a whole. */
+    std::string keyword;
+    /** \brief Optional suggestion. */
+    std::string hint;
+    /** \brief Other keywords involved, each with a note. */
+    std::vector<std::pair<std::string, std::string>> related;
+  };
+
+  /**
    * \brief Returns `true` if `@Help` is present among the keywords.
    */
   [[nodiscard]] bool
@@ -156,7 +176,7 @@ private:
    * \return One message per undefined keyword, with a suggestion when a
    * declared keyword has a similar spelling.
    */
-  [[nodiscard]] std::vector<std::string>
+  [[nodiscard]] std::vector<Violation>
   CollectUndefinedKeyWords(const std::vector<std::string> &list_of_keywords) const;
 
   /**
@@ -165,19 +185,19 @@ private:
    * \return One message per missing compulsory keyword and per alternative
    * group with zero or more than one member present.
    */
-  [[nodiscard]] std::vector<std::string>
+  [[nodiscard]] std::vector<Violation>
   CollectCompulsoryErrors(const std::vector<std::string> &list_of_keywords) const;
 
   /**
    * \brief Lists missing required companion keywords.
    */
-  [[nodiscard]] std::vector<std::string>
+  [[nodiscard]] std::vector<Violation>
   CollectRequiredErrors(const std::vector<std::string> &list_of_keywords) const;
 
   /**
    * \brief Lists pairs of mutually exclusive keywords used together.
    */
-  [[nodiscard]] std::vector<std::string>
+  [[nodiscard]] std::vector<Violation>
   CollectConflictErrors(const std::vector<std::string> &list_of_keywords) const;
 
 protected:
@@ -227,9 +247,12 @@ protected:
    * \brief Raises a grammar-scoped error.
    *
    * \param[in] message Diagnostic message without grammar prefix.
-   * \warning Always throws `std::runtime_error`.
+   * \warning Always throws `DictionaryError` (code `GrammarIncoherent`).
    */
   [[noreturn]] void ErrorMessage(std::string_view message) const;
+
+  /** \brief Context line used in exceptions, e.g. `Grammar of dictionary x`. */
+  [[nodiscard]] auto Context() const -> std::string;
 };
 } // namespace OpenSMOKEpp
 

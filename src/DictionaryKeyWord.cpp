@@ -34,11 +34,13 @@
 \*-----------------------------------------------------------------------*/
 
 #include "DictionaryKeyWord.h"
+#include "DictionaryDiagnostics.h"
 #include "DictionaryLexer.h"
 
 #include <algorithm>
 #include <ostream>
 #include <stdexcept>
+#include <utility>
 
 namespace OpenSMOKEpp {
 namespace {
@@ -90,7 +92,10 @@ auto keyword_type_reader(const DictionaryKeyWordTypes type) noexcept
 }
 
 void DictionaryKeyWord::ErrorMessage(const std::string message) const {
-  throw std::runtime_error("Keyword " + name_ + ": " + message);
+  Diagnostic diagnostic;
+  diagnostic.code = DiagnosticCode::GrammarIncoherent;
+  diagnostic.message = message;
+  throw DictionaryError({std::move(diagnostic)}, "Keyword " + name_);
 }
 
 DictionaryKeyWord::DictionaryKeyWord(const std::string &name,

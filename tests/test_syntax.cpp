@@ -79,7 +79,8 @@ TEST_CASE("syntax", "several dictionaries and names()") {
   CHECK(manager.names() == (std::vector<std::string>{"a", "b"}));
   CHECK(manager.contains("a"));
   CHECK(!manager.contains("c"));
-  CHECK_THROWS_WITH((void)manager("c"), "The c dictionary was not defined");
+  CHECK_THROWS_WITH((void)manager("c"), "the dictionary 'c' was not defined");
+  CHECK_THROWS_WITH((void)manager("bb"), "did you mean 'b'?");
 }
 
 // ---------------------------------------------------------------------------
@@ -190,8 +191,11 @@ TEST_CASE("syntax", "inline dictionaries are named parent/Keyword") {
 TEST_CASE("syntax", "inline and explicit dictionary with the same name") {
   CHECK_THROWS_WITH(parse("Dictionary a { @B { @X 1; } }\n"
                           "Dictionary a/B { @Y 2; }\n"),
-                    "The dictionary 'a/B' is defined more than once: at "
-                    "test.dic:1 and at test.dic:2");
+                    "test.dic:2:12: error: the dictionary 'a/B' is defined "
+                    "more than once");
+  CHECK_THROWS_WITH(parse("Dictionary a { @B { @X 1; } }\n"
+                          "Dictionary a/B { @Y 2; }\n"),
+                    "test.dic:1:16: note: previous definition is here");
 }
 
 // ---------------------------------------------------------------------------
@@ -204,9 +208,14 @@ TEST_CASE("syntax", "missing semicolon before the next keyword") {
   } catch (const Lexer::SyntaxError &error) {
     CHECK(error.line() == 4);
     CHECK(error.column() == 3);
+    CHECK(error.message() ==
+          "unexpected keyword @Y: missing ';' at the end of keyword @X (line 3)");
     CHECK(std::string(error.what()) ==
           "test.dic:4:3: error: unexpected keyword @Y: missing ';' at the end "
-          "of keyword @X (line 3)");
+          "of keyword @X (line 3)\n"
+          "    4 |   @Y 2;\n"
+          "      |   ^~");
+    CHECK(error.diagnostics().front().code == DiagnosticCode::Syntax);
   }
 }
 
@@ -234,7 +243,8 @@ TEST_CASE("syntax", "structural errors") {
                     "expected a dictionary name after 'Dictionary'");
   CHECK_THROWS_WITH(parse("Dictionary d @X 1;"), "expected '{' after");
   CHECK_THROWS_WITH(parse("Dictionary d { @X 1;"), "missing '}'");
-  CHECK_THROWS_WITH(parse("// only comments\n"), "No dictionaries are specified");
+  CHECK_THROWS_WITH(parse("// only comments\n"),
+                    "test.dic: error: no dictionaries are specified in this file");
 }
 
 TEST_CASE("syntax", "duplicate keywords and dictionaries") {
@@ -242,7 +252,7 @@ TEST_CASE("syntax", "duplicate keywords and dictionaries") {
                     "test.dic:4:1: error: the keyword @X is specified twice "
                     "in dictionary 'd' (lines 3 and 4)");
   CHECK_THROWS_WITH(parse("Dictionary d { @X 1; }\nDictionary d { @X 1; }\n"),
-                    "The dictionary 'd' is defined more than once");
+                    "the dictionary 'd' is defined more than once");
 }
 
 // ---------------------------------------------------------------------------

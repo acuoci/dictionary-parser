@@ -41,6 +41,7 @@
 #include <filesystem>
 #include <iosfwd>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -48,7 +49,9 @@
 #include <variant>
 #include <vector>
 
+#include "DictionaryDiagnostics.h"
 #include "DictionaryGrammar.h"
+#include "DictionaryLexer.h"
 
 namespace OpenSMOKEpp {
 /**
@@ -63,6 +66,29 @@ public:
   /** \brief Byte-backed boolean vector used to avoid `std::vector<bool>`
    * proxies. */
   using BoolVector = std::vector<std::uint8_t>;
+
+  /**
+   * \brief One `@Keyword values... ;` entry of the dictionary.
+   */
+  struct Entry {
+    /** \brief Keyword name including the leading `@`. */
+    std::string keyword;
+    /** \brief Value tokens as written (quotes kept), joined by blanks. */
+    std::string option;
+    /** \brief Value tokens (quotes removed). */
+    std::vector<std::string> values;
+    /**
+     * \brief Value tokens with their positions, parallel to `values`.
+     * Empty when the dictionary was not built by the parser.
+     */
+    std::vector<Lexer::Token> tokens;
+    /** \brief 1-based line of the keyword (0 if unknown). */
+    unsigned int first_line = 0;
+    /** \brief 1-based line of the terminating `;` (0 if unknown). */
+    unsigned int last_line = 0;
+    /** \brief 1-based column of the keyword (0 if unknown). */
+    unsigned int column = 0;
+  };
 
   /**
    * \brief Describes the category of a structured parsing failure.
@@ -95,6 +121,9 @@ public:
 
     /** \brief 1-based source line when available, otherwise 0. */
     unsigned int line = 0;
+
+    /** \brief 1-based source column when available, otherwise 0. */
+    unsigned int column = 0;
   };
 
   /**
@@ -230,6 +259,43 @@ public:
                      std::vector<std::vector<std::string>> values,
                      std::vector<unsigned int> starting_lines,
                      std::vector<unsigned int> ending_lines);
+
+  /**
+   * \brief Sets the entries produced by the parser.
+   *
+   * \param[in] entries Entries in source order.
+   * \warning Throws `std::invalid_argument` if a keyword appears twice.
+   */
+  void SetEntries(std::vector<Entry> entries);
+
+  /**
+   * \brief Sets the location of the dictionary name, used for problems
+   * concerning the dictionary as a whole (e.g. a missing keyword).
+   *
+   * \param[in] location Location of the name in the input file; its source,
+   * if any, is also used to show line excerpts for every entry.
+   */
+  void SetLocation(SourceLocation location);
+
+  /** \brief Returns the entries in source order. */
+  [[nodiscard]] const std::vector<Entry> &entries() const noexcept {
+    return entries_;
+  }
+
+  /** \brief Returns the location of the dictionary name. */
+  [[nodiscard]] const SourceLocation &location() const noexcept {
+    return location_;
+  }
+
+  /**
+   * \brief Returns the location of a keyword in the input file.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \return The location, or the dictionary location if the keyword is
+   * absent.
+   */
+  [[nodiscard]] SourceLocation
+  location_of(std::string_view name_of_keyword) const;
 
   /**
    * \brief Loads a grammar from file and validates this dictionary.
@@ -545,20 +611,11 @@ private:
   /** \brief Source file path or file name used in diagnostics. */
   std::string file_name_;
 
-  /** \brief Parsed keyword names, each including leading `@`. */
-  std::vector<std::string> keywords_;
+  /** \brief Entries in source order. */
+  std::vector<Entry> entries_;
 
-  /** \brief Raw option strings corresponding to `keywords_`. */
-  std::vector<std::string> options_;
-
-  /** \brief 1-based start line for each parsed keyword. */
-  std::vector<unsigned int> starting_lines_;
-
-  /** \brief 1-based end line for each parsed keyword. */
-  std::vector<unsigned int> ending_lines_;
-
-  /** \brief Value tokens (quotes removed) corresponding to `keywords_`. */
-  std::vector<std::vector<std::string>> values_;
+  /** \brief Location of the dictionary name (with the shared source). */
+  SourceLocation location_;
 
   /** \brief Grammar used for validation and typed-read checks. */
   DictionaryGrammar grammar_;
@@ -598,19 +655,45 @@ private:
    * \brief Raises a dictionary-scoped error.
    *
    * \param[in] message Diagnostic message without dictionary context.
-   * \warning Always throws `std::runtime_error`.
+   * \param[in] code Diagnostic category.
+   * \warning Always throws `DictionaryError`.
    */
-  [[noreturn]] void ErrorMessage(std::string_view message) const;
+  [[noreturn]] void
+  ErrorMessage(std::string_view message,
+               DiagnosticCode code = DiagnosticCode::Other) const;
 
   /**
    * \brief Raises an error about the value of one keyword entry.
    *
    * \param[in] index Entry index.
    * \param[in] message Diagnostic message.
-   * \warning Always throws `std::runtime_error`.
+   * \param[in] token Index of the offending value token, or `npos` to
+   * point at the keyword.
+   * \param[in] code Diagnostic category.
+   * \warning Always throws `DictionaryError`.
    */
-  [[noreturn]] void EntryError(std::size_t index,
-                               std::string_view message) const;
+  [[noreturn]] void
+  EntryError(std::size_t index, std::string_view message,
+             std::size_t token = static_cast<std::size_t>(-1),
+             DiagnosticCode code = DiagnosticCode::InvalidValue) const;
+
+  /** \brief Context line used in exceptions. */
+  [[nodiscard]] auto Context() const -> std::string;
+
+  /** \brief Throws a `DictionaryError` with the given diagnostics. */
+  [[noreturn]] void Fail(std::vector<Diagnostic> diagnostics) const;
+
+  /** \brief Location of the keyword of entry `index`. */
+  [[nodiscard]] auto KeywordLocation(std::size_t index) const
+      -> SourceLocation;
+
+  /** \brief Location of value token `token` of entry `index`. */
+  [[nodiscard]] auto TokenLocation(std::size_t index, std::size_t token) const
+      -> SourceLocation;
+
+  /** \brief Index of a keyword, or `npos` if absent. */
+  [[nodiscard]] auto IndexOf(std::string_view name_of_keyword) const noexcept
+      -> std::size_t;
 
   /**
    * \brief Determines the dimension used to convert a measure keyword.
@@ -629,9 +712,9 @@ private:
   /**
    * \brief Validates the units of measure keywords declaring a dimension.
    *
-   * \return One message per invalid entry.
+   * \return One diagnostic per invalid entry.
    */
-  [[nodiscard]] auto CollectMeasureErrors() const -> std::vector<std::string>;
+  [[nodiscard]] auto CollectMeasureErrors() const -> std::vector<Diagnostic>;
 
   /**
    * \brief Diagnoses a failed typed lookup without throwing.

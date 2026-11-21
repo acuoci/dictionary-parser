@@ -36,9 +36,11 @@
 #include "DictionaryManager.h"
 #include "DictionaryLexer.h"
 #include "DictionaryParser.h"
+#include "DictionaryUtilities.h"
 
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
@@ -50,13 +52,19 @@ namespace {
     -> std::string {
   std::ifstream input(path, std::ios::in | std::ios::binary);
   if (!input.is_open())
-    throw std::runtime_error("Unable to open dictionary file: " +
-                             path.string());
+    throw DictionaryError(
+        {Diagnostic{Severity::Error, DiagnosticCode::Other,
+                    SourceLocation{nullptr, path.string(), 0, 0, 0},
+                    "unable to open the dictionary file", {}, {}}},
+        "DictionaryManager");
   std::ostringstream buffer;
   buffer << input.rdbuf();
   if (input.bad())
-    throw std::runtime_error("I/O error while reading dictionary file: " +
-                             path.string());
+    throw DictionaryError(
+        {Diagnostic{Severity::Error, DiagnosticCode::Other,
+                    SourceLocation{nullptr, path.string(), 0, 0, 0},
+                    "I/O error while reading the dictionary file", {}, {}}},
+        "DictionaryManager");
   return buffer.str();
 }
 
@@ -70,8 +78,13 @@ namespace {
 }
 } // namespace
 
-void DictionaryManager::ErrorMessage(std::string_view message) const {
-  throw std::runtime_error("DictionaryManager: " + std::string(message));
+void DictionaryManager::ErrorMessage(std::string_view message,
+                                     SourceLocation location,
+                                     std::string hint) const {
+  throw DictionaryError({Diagnostic{Severity::Error, DiagnosticCode::Other,
+                                    std::move(location), std::string(message),
+                                    std::move(hint), {}}},
+                        "DictionaryManager");
 }
 
 void DictionaryManager::ReadDictionariesFromFile(std::string_view file_name) {
@@ -83,8 +96,8 @@ void DictionaryManager::ReadDictionariesFromFile(std::string_view file_name) {
   const std::size_t before = map_of_dictionaries_.size();
   Load(text, std::string(file_name), path.parent_path(), stack, visited);
   if (map_of_dictionaries_.size() == before)
-    ErrorMessage("No dictionaries are specified in file " +
-                 std::string(file_name) + ".");
+    ErrorMessage("no dictionaries are specified in this file",
+                 SourceLocation{nullptr, std::string(file_name), 0, 0, 0});
 }
 
 void DictionaryManager::ReadDictionariesFromString(
@@ -96,8 +109,9 @@ void DictionaryManager::ReadDictionariesFromString(
   Load(text, std::string(virtual_file_name), include_directory, stack,
        visited);
   if (map_of_dictionaries_.size() == before)
-    ErrorMessage("No dictionaries are specified in " +
-                 std::string(virtual_file_name) + ".");
+    ErrorMessage("no dictionaries are specified in this file",
+                 SourceLocation{nullptr, std::string(virtual_file_name), 0, 0,
+                                0});
 }
 
 void DictionaryManager::Load(std::string_view text,
@@ -105,41 +119,53 @@ void DictionaryManager::Load(std::string_view text,
                              const std::filesystem::path &directory,
                              std::vector<std::filesystem::path> &stack,
                              std::set<std::filesystem::path> &visited) {
-  detail::ParsedSource parsed = detail::parse_source(text, display_name);
+  const auto source = std::make_shared<const SourceFile>(display_name,
+                                                         std::string(text));
+  detail::ParsedSource parsed = detail::parse_source(source);
+  const auto at = [&source](const unsigned int line, const unsigned int column,
+                            const unsigned int length) {
+    return SourceLocation{source, source->name(), line, column, length};
+  };
 
   for (auto &block : parsed.dictionaries) {
-    const std::string origin =
-        display_name + ":" + std::to_string(block.line);
-    if (const auto it = origins_.find(block.name); it != origins_.end())
-      ErrorMessage("The dictionary '" + block.name +
-                   "' is defined more than once: at " + it->second +
-                   " and at " + origin + ".");
+    const SourceLocation origin = at(block.line, block.column, block.length);
+    if (const auto it = origins_.find(block.name); it != origins_.end()) {
+      Diagnostic duplicate{Severity::Error,
+                           DiagnosticCode::DuplicateDictionary,
+                           origin,
+                           "the dictionary '" + block.name +
+                               "' is defined more than once",
+                           {},
+                           {}};
+      duplicate.notes.push_back(Diagnostic{Severity::Note,
+                                           DiagnosticCode::DuplicateDictionary,
+                                           it->second,
+                                           "previous definition is here",
+                                           {},
+                                           {}});
+      throw DictionaryError({std::move(duplicate)}, "DictionaryManager");
+    }
 
-    std::vector<std::string> keywords;
-    std::vector<std::string> options;
-    std::vector<std::vector<std::string>> values;
-    std::vector<unsigned int> starting_lines;
-    std::vector<unsigned int> ending_lines;
-    keywords.reserve(block.entries.size());
-    options.reserve(block.entries.size());
-    values.reserve(block.entries.size());
-    starting_lines.reserve(block.entries.size());
-    ending_lines.reserve(block.entries.size());
-    for (auto &entry : block.entries) {
-      keywords.push_back(std::move(entry.keyword));
-      options.push_back(std::move(entry.option));
-      values.push_back(std::move(entry.values));
-      starting_lines.push_back(entry.first_line);
-      ending_lines.push_back(entry.last_line);
+    std::vector<Dictionary::Entry> entries;
+    entries.reserve(block.entries.size());
+    for (auto &parsed_entry : block.entries) {
+      Dictionary::Entry entry;
+      entry.keyword = std::move(parsed_entry.keyword);
+      entry.option = std::move(parsed_entry.option);
+      entry.values = std::move(parsed_entry.values);
+      entry.tokens = std::move(parsed_entry.tokens);
+      entry.first_line = parsed_entry.first_line;
+      entry.last_line = parsed_entry.last_line;
+      entry.column = parsed_entry.column;
+      entries.push_back(std::move(entry));
     }
 
     Dictionary dictionary;
     dictionary.SetName(block.name);
     dictionary.SetFileName(display_name);
     dictionary.SetUnitSystem(unit_system_);
-    dictionary.SetDictionary(std::move(keywords), std::move(options),
-                             std::move(values), std::move(starting_lines),
-                             std::move(ending_lines));
+    dictionary.SetEntries(std::move(entries));
+    dictionary.SetLocation(origin);
     origins_.emplace(block.name, origin);
     map_of_dictionaries_.emplace(block.name, std::move(dictionary));
   }
@@ -157,8 +183,9 @@ void DictionaryManager::Load(std::string_view text,
       for (std::size_t j = i; j < stack.size(); ++j)
         chain += stack[j].filename().string() + " -> ";
       chain += key.filename().string();
-      throw Lexer::SyntaxError(display_name, include.line, include.column,
-                               "circular #include: " + chain);
+      throw Lexer::SyntaxError(at(include.line, include.column, 8),
+                               "circular #include: " + chain,
+                               DiagnosticCode::Include);
     }
     if (visited.contains(key))
       continue; // each file is read at most once
@@ -166,11 +193,12 @@ void DictionaryManager::Load(std::string_view text,
     std::string included_text;
     try {
       included_text = read_whole_file(resolved);
-    } catch (const std::runtime_error &) {
-      throw Lexer::SyntaxError(display_name, include.line, include.column,
+    } catch (const DictionaryError &) {
+      throw Lexer::SyntaxError(at(include.line, include.column, 8),
                                "cannot open included file '" + include.path +
                                    "' (resolved to '" + resolved.string() +
-                                   "')");
+                                   "')",
+                               DiagnosticCode::Include);
     }
 
     visited.insert(key);
@@ -183,8 +211,13 @@ void DictionaryManager::Load(std::string_view text,
 
 Dictionary &DictionaryManager::operator()(std::string_view name) {
   const auto it = map_of_dictionaries_.find(name);
-  if (it == map_of_dictionaries_.end())
-    ErrorMessage("The " + std::string(name) + " dictionary was not defined.");
+  if (it == map_of_dictionaries_.end()) {
+    const std::string suggestion = detail::closest_match(name, names());
+    ErrorMessage("the dictionary '" + std::string(name) + "' was not defined",
+                 {},
+                 suggestion.empty() ? std::string()
+                                    : "did you mean '" + suggestion + "'?");
+  }
   return it->second;
 }
 

@@ -12,6 +12,37 @@ Scope of the study:
 
 ## 0. Progress log
 
+### Phase 2 (diagnostics and syntax tree): done (branch `feature/phase2`, 2026-11-21)
+
+Delivered:
+- **New public header `DictionaryDiagnostics.h`:**
+  - `SourceFile`, a shared and immutable copy of an input file;
+  - `SourceLocation` (file, line, column, length);
+  - `Diagnostic` (severity, code, location, message, hint, notes) with 18 codes;
+  - `format_diagnostic`, a compiler-style renderer that prints the source line and a `^~~~` marker;
+  - `DictionaryError`, carrying all diagnostics, with `error_count()` and `has(code)`.
+- **Every error is now a `DictionaryError`:**
+  - syntax, include and duplicate-dictionary errors from parsing;
+  - grammar incoherence;
+  - dictionary validation;
+  - reads, including programming errors.
+  - `Lexer::SyntaxError` derives from it and keeps its accessors.
+- **Syntax tree.** `Dictionary` stores `Entry` objects (keyword, option, values, tokens with positions, lines) instead of parallel vectors, and shares the source text. This gives:
+  - errors that point at the exact token, even when raised during a later `Read*` call;
+  - a missing keyword reported at the dictionary name;
+  - conflicts and alternative groups reported at the later keyword, with notes on the earlier ones;
+  - new API: `entries()`, `location()`, `location_of()`, `SetEntries()` and `SetLocation()`.
+- **Grammar rule checks** return structured violations; the dictionary turns them into located diagnostics.
+- **Shared spelling suggestions** (`src/DictionaryUtilities.*`), now also used for misspelled dictionary names in `DictionaryManager::operator()`.
+
+Verification:
+- 12 new test cases (72 in total); 14/14 CTest targets pass, also with ASan/UBSan and `-Werror`.
+- **Corpus:** the output for all 147 files is identical to the Phase 0–1 output.
+- **Grammars:** 98 of the 99 OpenSMOKE++2 grammars are still coherent (the same one as before fails).
+- **MOM** compiles unchanged and its dictionary test passes.
+
+Not done in this phase: a strict/lenient warning policy. There is no warning-producing check yet; it comes with the usage tracking of Phase 3.
+
 ### Phase 5 (units): done (branch `feature/units`, 2026-11-21)
 
 This phase was brought forward, ahead of Phases 2–4, at the user's request.

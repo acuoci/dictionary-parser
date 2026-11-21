@@ -38,10 +38,13 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "DictionaryDiagnostics.h"
 
 /**
  * \brief Low-level lexical utilities for dictionary input files.
@@ -232,13 +235,25 @@ read_and_preprocess_file(const std::filesystem::path &file_name)
 /**
  * \brief Exception raised for lexical and syntactic errors in input files.
  *
- * The message has the compiler-like form `file:line:column: error: text`.
- * The individual location fields are available for programmatic handling.
+ * It is a `DictionaryError` with a single diagnostic; `what()` has the
+ * compiler-like form `file:line:column: error: text`, followed by the
+ * source line and a marker when the source text is known. The individual
+ * location fields are available for programmatic handling.
  */
-class SyntaxError : public std::runtime_error {
+class SyntaxError : public DictionaryError {
 public:
   /**
-   * \brief Constructs a syntax error.
+   * \brief Constructs a syntax error at a source location.
+   *
+   * \param[in] location Where the error is.
+   * \param[in] message Diagnostic text without location prefix.
+   * \param[in] code Diagnostic category (`Syntax` by default).
+   */
+  SyntaxError(SourceLocation location, const std::string &message,
+              DiagnosticCode code = DiagnosticCode::Syntax);
+
+  /**
+   * \brief Constructs a syntax error from a file name and a position.
    *
    * \param[in] file_name Name of the source file (or a virtual name).
    * \param[in] line 1-based line number.
@@ -250,22 +265,20 @@ public:
 
   /** \brief Returns the source file name. */
   [[nodiscard]] const std::string &file_name() const noexcept {
-    return file_name_;
+    return diagnostics().front().location.file_name;
   }
   /** \brief Returns the 1-based line number. */
-  [[nodiscard]] unsigned int line() const noexcept { return line_; }
+  [[nodiscard]] unsigned int line() const noexcept {
+    return diagnostics().front().location.line;
+  }
   /** \brief Returns the 1-based column number. */
-  [[nodiscard]] unsigned int column() const noexcept { return column_; }
+  [[nodiscard]] unsigned int column() const noexcept {
+    return diagnostics().front().location.column;
+  }
   /** \brief Returns the diagnostic text without location prefix. */
   [[nodiscard]] const std::string &message() const noexcept {
-    return message_;
+    return diagnostics().front().message;
   }
-
-private:
-  std::string file_name_;
-  unsigned int line_ = 0;
-  unsigned int column_ = 0;
-  std::string message_;
 };
 
 /**
@@ -321,6 +334,18 @@ struct Token {
  * a word, or a character glued to a closing quote.
  */
 [[nodiscard]] auto tokenize(std::string_view source, std::string_view file_name)
+    -> std::vector<Token>;
+
+/**
+ * \brief Splits the text of a shared source file into tokens.
+ *
+ * Same rules as `tokenize(std::string_view, std::string_view)`; syntax
+ * errors carry the source so that the offending line can be shown.
+ *
+ * \param[in] source Shared source file (must not be null).
+ * \return Tokens in source order.
+ */
+[[nodiscard]] auto tokenize(const std::shared_ptr<const SourceFile> &source)
     -> std::vector<Token>;
 } // namespace OpenSMOKEpp::Lexer
 

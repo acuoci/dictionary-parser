@@ -37,6 +37,7 @@
 #include "DictionaryLexer.h"
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -59,8 +60,9 @@ using Lexer::TokenKind;
 
 class Parser {
 public:
-  Parser(const std::vector<Token> &tokens, std::string file_name)
-      : tokens_(tokens), file_(std::move(file_name)) {}
+  Parser(const std::vector<Token> &tokens,
+         std::shared_ptr<const SourceFile> source)
+      : tokens_(tokens), source_(std::move(source)) {}
 
   auto run() -> ParsedSource {
     while (!at_end()) {
@@ -79,7 +81,7 @@ public:
 
 private:
   const std::vector<Token> &tokens_;
-  std::string file_;
+  std::shared_ptr<const SourceFile> source_;
   std::size_t position_ = 0;
   ParsedSource result_;
 
@@ -89,8 +91,20 @@ private:
   [[nodiscard]] auto current() const -> const Token & {
     return tokens_[position_];
   }
+  [[nodiscard]] auto location(const unsigned int line, const unsigned int column,
+                              const std::size_t length) const
+      -> SourceLocation {
+    SourceLocation where;
+    where.source = source_;
+    where.file_name = source_->name();
+    where.line = line;
+    where.column = column;
+    where.length = static_cast<unsigned int>(length);
+    return where;
+  }
   [[noreturn]] void fail(const Token &token, const std::string &message) const {
-    throw SyntaxError(file_, token.line, token.column, message);
+    throw SyntaxError(location(token.line, token.column, token.spelling.size()),
+                      message);
   }
 
   void parse_include() {
@@ -126,16 +140,19 @@ private:
     if (at_end() || current().kind != TokenKind::LeftBrace)
       fail(at_end() ? name : current(),
            "expected '{' after 'Dictionary " + name.text + "'");
-    parse_block(name.text, header.line);
+    parse_block(name.text, header.line, name.column, name.spelling.size());
   }
 
   // Parses "{ entry+ }" starting at '{'. Returns the line of the closing '}'.
-  auto parse_block(const std::string &name, const unsigned int header_line)
+  auto parse_block(const std::string &name, const unsigned int header_line,
+                   const unsigned int name_column, const std::size_t name_length)
       -> unsigned int {
     const Token &open = tokens_[position_++];
     ParsedDictionary dictionary;
     dictionary.name = name;
     dictionary.line = header_line;
+    dictionary.column = name_column;
+    dictionary.length = static_cast<unsigned int>(name_length);
 
     unsigned int closing_line = 0;
     while (true) {
@@ -170,7 +187,8 @@ private:
       const auto [it, inserted] =
           first_line.emplace(entry.keyword, entry.first_line);
       if (!inserted)
-        throw SyntaxError(file_, entry.first_line, entry.column,
+        throw SyntaxError(location(entry.first_line, entry.column,
+                                   entry.keyword.size()),
                           "the keyword " + entry.keyword +
                               " is specified twice in dictionary '" + name +
                               "' (lines " + std::to_string(it->second) +
@@ -193,8 +211,13 @@ private:
     // Inline dictionary: @Keyword { ... } [;]
     if (!at_end() && current().kind == TokenKind::LeftBrace) {
       const std::string child = dictionary.name + "/" + keyword.text.substr(1);
-      entry.last_line = parse_block(child, keyword.line);
+      entry.last_line = parse_block(child, keyword.line, keyword.column,
+                                    keyword.spelling.size());
       entry.values.push_back(child);
+      Token reference = keyword;
+      reference.kind = TokenKind::Word;
+      reference.text = child;
+      entry.tokens.push_back(std::move(reference));
       entry.option = child;
       if (!at_end() && current().kind == TokenKind::Semicolon)
         ++position_;
@@ -229,6 +252,7 @@ private:
         [[fallthrough]];
       case TokenKind::QuotedString:
         entry.values.push_back(token.text);
+        entry.tokens.push_back(token);
         if (!entry.option.empty())
           entry.option += ' ';
         entry.option += token.spelling;
@@ -240,10 +264,10 @@ private:
 };
 } // namespace
 
-auto parse_source(const std::string_view source, const std::string_view file_name)
+auto parse_source(const std::shared_ptr<const SourceFile> &source)
     -> ParsedSource {
-  const auto tokens = Lexer::tokenize(source, file_name);
-  Parser parser(tokens, std::string(file_name));
+  const auto tokens = Lexer::tokenize(source);
+  Parser parser(tokens, source);
   return parser.run();
 }
 } // namespace OpenSMOKEpp::detail

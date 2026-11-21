@@ -27,6 +27,7 @@ set(DICTIONARY_PARSER_CORPUS_DIR "${_default_corpus}" CACHE PATH
 # ---------------------------------------------------------------------------
 add_library(dictionary_parser
 	src/Dictionary.cpp
+	src/DictionaryDiagnostics.cpp
 	src/DictionaryGrammar.cpp
 	src/DictionaryInputFile.cpp
 	src/DictionaryKeyWord.cpp
@@ -34,6 +35,7 @@ add_library(dictionary_parser
 	src/DictionaryManager.cpp
 	src/DictionaryParser.cpp
 	src/DictionaryUnits.cpp
+	src/DictionaryUtilities.cpp
 )
 
 add_library(DictionaryParser::dictionary_parser ALIAS dictionary_parser)
@@ -98,10 +100,11 @@ if (DICTIONARY_PARSER_BUILD_TESTS)
 		tests/test_reads.cpp
 		tests/test_grammar.cpp
 		tests/test_units.cpp
+		tests/test_diagnostics.cpp
 	)
 	target_compile_definitions(unit_tests PRIVATE
 		DICTIONARY_PARSER_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
-	foreach(suite lexer syntax include reads grammar validation units measures)
+	foreach(suite lexer syntax include reads grammar validation units measures diagnostics)
 		add_test(NAME Unit_${suite} COMMAND unit_tests ${suite})
 	endforeach()
 

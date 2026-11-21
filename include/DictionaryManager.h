@@ -91,8 +91,8 @@ public:
    * \param[in] name Dictionary name exactly as declared after the
    * `Dictionary` token, or `parent/Keyword` for an inline block.
    * \return Mutable reference to the stored dictionary.
-   * \warning Throws `std::runtime_error` if no dictionary with `name` was
-   * loaded.
+   * \warning Throws `DictionaryError` if no dictionary with `name` was
+   * loaded (with a suggestion when a similar name exists).
    */
   Dictionary &operator()(std::string_view name);
 
@@ -128,8 +128,8 @@ private:
   /** \brief Target unit system applied to every dictionary. */
   units::UnitSystem unit_system_{};
 
-  /** \brief `file:line` where each dictionary was defined. */
-  std::map<std::string, std::string, std::less<>> origins_;
+  /** \brief Where each dictionary was defined. */
+  std::map<std::string, SourceLocation, std::less<>> origins_;
 
   /**
    * \brief Parses one source buffer and, recursively, its includes.
@@ -149,9 +149,13 @@ private:
    * \brief Raises a manager-scoped parsing or lookup error.
    *
    * \param[in] message Diagnostic message without class prefix.
-   * \warning Always throws `std::runtime_error`.
+   * \param[in] location Where the problem is (optional).
+   * \param[in] hint Optional suggestion.
+   * \warning Always throws `DictionaryError`.
    */
-  [[noreturn]] void ErrorMessage(std::string_view message) const;
+  [[noreturn]] void ErrorMessage(std::string_view message,
+                                 SourceLocation location = {},
+                                 std::string hint = {}) const;
 };
 } // namespace OpenSMOKEpp
 

@@ -34,6 +34,7 @@
 \*-----------------------------------------------------------------------*/
 
 #include "DictionaryUnits.h"
+#include "DictionaryUtilities.h"
 
 #include <algorithm>
 #include <cmath>
@@ -154,36 +155,11 @@ struct Term {
   bool modified = false; // exponent, prefix, number or operator applied
 };
 
-[[nodiscard]] auto lower(const char c) -> char {
-  return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-}
-
-[[nodiscard]] auto edit_distance(std::string_view a, std::string_view b)
-    -> std::size_t {
-  std::vector<std::size_t> previous(b.size() + 1);
-  std::vector<std::size_t> current(b.size() + 1);
-  // Costs are doubled so that a case-only difference costs 1.
-  for (std::size_t j = 0; j <= b.size(); ++j)
-    previous[j] = 2 * j;
-  for (std::size_t i = 1; i <= a.size(); ++i) {
-    current[0] = 2 * i;
-    for (std::size_t j = 1; j <= b.size(); ++j) {
-      const std::size_t cost = a[i - 1] == b[j - 1]               ? 0
-                               : lower(a[i - 1]) == lower(b[j - 1]) ? 1
-                                                                    : 2;
-      current[j] = std::min({previous[j] + 2, current[j - 1] + 2,
-                             previous[j - 1] + cost});
-    }
-    std::swap(previous, current);
-  }
-  return previous[b.size()];
-}
-
 [[nodiscard]] auto suggestion_for(std::string_view symbol) -> std::string {
   std::string best;
   std::size_t best_distance = std::numeric_limits<std::size_t>::max();
   const auto consider = [&](std::string_view candidate) {
-    const std::size_t d = edit_distance(symbol, candidate);
+    const std::size_t d = detail::edit_distance(symbol, candidate);
     if (d < best_distance) {
       best_distance = d;
       best = std::string(candidate);

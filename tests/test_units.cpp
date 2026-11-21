@@ -299,8 +299,9 @@ TEST_CASE("measures", "explicit dimension for keywords without one") {
   CHECK_THROWS_WITH(d.ReadMeasure("@DeltaT", value, dim::Temperature),
                     "declared with dimension temperature difference [K]");
   CHECK_THROWS_WITH(d.ReadMeasure("@Raw", value, dim::Velocity),
-                    "line 8, keyword @Raw: units 'K' (temperature [K]) are not "
-                    "compatible with the expected velocity [m/s]");
+                    "test.dic:8:21: error: keyword @Raw: units 'K' "
+                    "(temperature [K]) are not compatible with the expected "
+                    "velocity [m/s]");
 }
 
 TEST_CASE("measures", "units are validated when the grammar is attached") {
@@ -324,15 +325,16 @@ TEST_CASE("measures", "units are validated when the grammar is attached") {
     CHECK(what.find("5 errors found") != std::string::npos);
     CHECK(what.find("the compulsory keyword @Mandatory is missing") !=
           std::string::npos);
-    CHECK(what.find("line 3, keyword @Velocity: units 'K' (temperature [K]) "
-                    "are not compatible with the expected velocity [m/s]") !=
+    CHECK(what.find("test.dic:3:19: error: keyword @Velocity: units 'K' "
+                    "(temperature [K]) are not compatible with the expected "
+                    "velocity [m/s]") != std::string::npos);
+    CHECK(what.find("test.dic:4:16: error: keyword @Length: invalid unit 'Kg': "
+                    "unknown unit symbol 'Kg' (did you mean 'kg'?)") !=
           std::string::npos);
-    CHECK(what.find("line 4, keyword @Length: invalid unit 'Kg': unknown unit "
-                    "symbol 'Kg' (did you mean 'kg'?)") != std::string::npos);
-    CHECK(what.find("line 5, keyword @Times: pairs of a number and units") !=
-          std::string::npos);
-    CHECK(what.find("line 6, keyword @Pressure: a measure requires exactly two "
-                    "values") != std::string::npos);
+    CHECK(what.find("test.dic:5:3: error: keyword @Times: pairs of a number "
+                    "and units") != std::string::npos);
+    CHECK(what.find("test.dic:6:3: error: keyword @Pressure: a measure "
+                    "requires exactly two values") != std::string::npos);
   }
 }
 
