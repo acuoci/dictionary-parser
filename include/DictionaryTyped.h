@@ -356,6 +356,24 @@ struct PathSpec {
   }
 };
 
+/**
+ * \brief The name of another dictionary read with its own, untyped grammar
+ * (`std::string`). Use `Reference<G>()` when that dictionary has a typed
+ * grammar `G`: it is then validated and returned as a `View<G>`.
+ */
+struct DictionaryNameSpec {
+  using type = std::string;
+  static constexpr bool comparable = false;
+  [[nodiscard]] constexpr auto may_equal(std::string_view) const -> bool {
+    return false;
+  }
+  [[nodiscard]] auto format() const -> ValueFormat { return formats::Word(); }
+  [[nodiscard]] auto keyword(const std::string &name, const std::string &comment,
+                             bool compulsory) const -> DictionaryKeyWord {
+    return {name, SINGLE_DICTIONARY, comment, compulsory};
+  }
+};
+
 /** \brief A number followed by units of a dimension; the value is in SI
  * units (`double`). */
 struct QuantitySpec : detail::Bounded<QuantitySpec> {
@@ -660,6 +678,8 @@ template <class G> struct ReferenceListSpec : detail::Sized<ReferenceListSpec<G>
 [[nodiscard]] constexpr auto Text() -> TextSpec { return {}; }
 /** \brief A path (`std::filesystem::path`). */
 [[nodiscard]] constexpr auto Path() -> PathSpec { return {}; }
+/** \brief The name of a dictionary with an untyped grammar (`std::string`). */
+[[nodiscard]] constexpr auto DictionaryName() -> DictionaryNameSpec { return {}; }
 /** \brief A measure of the given dimension, in SI units (`double`). */
 [[nodiscard]] constexpr auto Quantity(const units::Dimension &dimension)
     -> QuantitySpec {

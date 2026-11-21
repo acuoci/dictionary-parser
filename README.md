@@ -472,6 +472,7 @@ the first problem found, so it can also be tested with `static_assert`.
 | `Table(Column("t", dim::Time), Column("x"))` | `std::vector<std::array<double, N>>` (SI) |
 | `Choice(spec...)` | `std::variant<spec types...>` |
 | `Reference<G>()`, `ReferenceList<G>()` | `View<G>`, `std::vector<View<G>>` |
+| `DictionaryName()` | `std::string` (a dictionary with an untyped grammar) |
 
 Keys are refined with `Compulsory()`, `Default("text as in a file")` and
 `Deprecated("advice")`. Rules use the same names as `OpenSMOKEpp::rules`, with

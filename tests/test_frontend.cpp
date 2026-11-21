@@ -465,3 +465,28 @@ Dictionary shared { @Temperature 300 K; @Pressure 1 bar; @MoleFractions O2 1; }
   CHECK_NOTHROW((void)manager.validate<reactor::Batch>("batch")); // same grammar twice
   CHECK_THROWS_WITH((void)manager.view<chain::Node>("shared"), "already used as 'gas status'");
 }
+
+namespace legacy_reference {
+inline constexpr auto Options =
+    Key<"@Options">(DictionaryName(), "Dictionary with additional options");
+struct Main : Grammar<Main> {
+  static constexpr auto keys = Keys(Options);
+};
+} // namespace legacy_reference
+
+TEST_CASE("frontend", "DictionaryName: a dictionary with an untyped grammar") {
+  auto manager = parse("Dictionary main { @Options extra; } "
+                       "Dictionary extra { @Anything 1; }");
+  const auto main = manager.view<legacy_reference::Main>("main");
+  const std::string name = main.get(legacy_reference::Options);
+  CHECK(name == "extra");
+  CHECK(manager("extra").name() == "extra"); // left to its own grammar
+  CHECK(runtime_grammar<legacy_reference::Main>()
+            .FindKeyWord("@Options")
+            ->type() == SINGLE_DICTIONARY);
+
+  auto wrong = parse("Dictionary main { @Options a b; }");
+  const DictionaryError error =
+      catch_error([&] { (void)wrong.view<legacy_reference::Main>("main"); });
+  CHECK(std::string(error.what()).find("dictionary name") != std::string::npos);
+}
