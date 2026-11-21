@@ -165,6 +165,12 @@ void DictionaryGrammar::ReadFromFile(std::string_view file_name) {
     std::vector<std::string> block(lines.begin() + static_cast<std::ptrdiff_t>(first),
                                    lines.begin() + static_cast<std::ptrdiff_t>(first + 7));
     keywords_.emplace_back(block);
+    // Optional eighth line: "dimension: <SI unit> [difference]"
+    if (first + 7 < lines.size()) {
+      const auto tokens = Lexer::split_whitespace_view(lines[first + 7]);
+      if (!tokens.empty() && tokens.front() == "dimension:")
+        keywords_.back().SetDimensionFromLine(lines[first + 7]);
+    }
   }
 
   number_of_keywords_ = static_cast<unsigned int>(keywords_.size());
@@ -207,6 +213,12 @@ void DictionaryGrammar::Check() {
                          "'\"'");
     if (keyword_type_name(keywords_[i].type()) == "unknown")
       problems.push_back("the keyword " + name + " has an invalid type");
+    if (keywords_[i].dimension() && keywords_[i].type() != SINGLE_MEASURE &&
+        keywords_[i].type() != VECTOR_MEASURE)
+      problems.push_back("the keyword " + name + " declares a dimension (" +
+                         units::describe(*keywords_[i].dimension()) +
+                         "), but only single_measure and vector_measure "
+                         "keywords can have one");
     if (!index.emplace(name, i).second &&
         reported_duplicates.insert(name).second)
       problems.push_back("the keyword " + name + " is defined more than once");
@@ -475,7 +487,8 @@ void DictionaryGrammar::ShortSummary(std::ostream &fout) const {
 }
 
 std::string
-DictionaryGrammar::AvailableKeyWordsTable(std::string_view dictionary_name) const {
+DictionaryGrammar::AvailableKeyWordsTable(std::string_view dictionary_name,
+                                          const units::UnitSystem &system) const {
   const std::string title =
       dictionary_name.empty() ? name_ : std::string(dictionary_name);
   std::ostringstream out;
@@ -486,6 +499,8 @@ DictionaryGrammar::AvailableKeyWordsTable(std::string_view dictionary_name) cons
   for (const auto &keyword : keywords_) {
     out << std::setw(45) << std::left << keyword.name();
     out << std::setw(20) << std::left << keyword.type_ascii();
+    if (keyword.dimension())
+      out << "[" << units::si_unit(*keyword.dimension(), system) << "] ";
     out << std::left << keyword.comment_short() << '\n';
   }
   out << rule << '\n';

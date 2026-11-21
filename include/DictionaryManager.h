@@ -105,6 +105,16 @@ public:
   [[nodiscard]] bool contains(std::string_view name) const;
 
   /**
+   * \brief Selects the target unit system of all dictionaries.
+   *
+   * Applies to the dictionaries already loaded and to those loaded later.
+   *
+   * \param[in] system `units::si_kmol` (kilomole, the OpenSMOKE++
+   * convention and the default) or `units::si` (strict SI, mole).
+   */
+  void SetUnitSystem(const units::UnitSystem &system);
+
+  /**
    * \brief Returns the names of all loaded dictionaries, sorted.
    *
    * \return Dictionary names.
@@ -114,6 +124,9 @@ public:
 private:
   /** \brief Dictionaries indexed by their declared names. */
   std::map<std::string, Dictionary, std::less<>> map_of_dictionaries_;
+
+  /** \brief Target unit system applied to every dictionary. */
+  units::UnitSystem unit_system_{};
 
   /** \brief `file:line` where each dictionary was defined. */
   std::map<std::string, std::string, std::less<>> origins_;

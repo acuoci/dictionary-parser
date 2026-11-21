@@ -256,8 +256,32 @@ DictionaryKeyWord::DictionaryKeyWord(std::vector<std::string> &lines) {
   SetConflictingKeywords(lines[6]);
 }
 
+void DictionaryKeyWord::SetDimensionFromLine(const std::string &line) {
+  const auto tokens = Lexer::split_whitespace_view(line);
+  if (tokens.size() < 2 || tokens.size() > 3 || tokens[0] != "dimension:" ||
+      (tokens.size() == 3 && tokens[2] != "difference"))
+    ErrorMessage("The keyword dimension is not specified correctly: expected "
+                 "'dimension: <SI unit> [difference]'.");
+  try {
+    units::Dimension dimension = units::parse_unit(tokens[1]).dimension;
+    if (tokens.size() == 3) {
+      if (!dimension.is_temperature())
+        ErrorMessage("Only a temperature dimension can be marked as "
+                     "'difference'.");
+      dimension = dimension.as_difference();
+    }
+    dimension_ = dimension;
+  } catch (const units::UnitError &error) {
+    ErrorMessage(std::string("The keyword dimension is not valid: ") +
+                 error.what());
+  }
+}
+
 void DictionaryKeyWord::ShortSummary(std::ostream &fout) const {
-  fout << name_ << " (" << type_ascii_ << ")" << std::endl;
+  fout << name_ << " (" << type_ascii_;
+  if (dimension_)
+    fout << ", " << units::describe(*dimension_);
+  fout << ")" << std::endl;
   fout << " * " << comment_short_ << std::endl;
 }
 

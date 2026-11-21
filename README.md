@@ -13,6 +13,7 @@ OpenSMOKE++ Dictionary Parser provides a compact parser for `Dictionary ... { ..
 | Architecture | Public headers in `include/`, private compiled implementation in `src/` |
 | Parsing model | Dictionary blocks, `@Keyword` entries, semicolon terminators, multiline values |
 | Syntax | Inline dictionaries, `#include`, quoted strings, flexible brace placement |
+| Units | Dimensions declared in the grammar; units in the input checked and converted to SI automatically |
 | Validation | Grammar layer for required keywords, conflicts, alternatives, and typed reads, with a coherence analysis of the grammar itself |
 | Error handling | Standard exceptions; all problems reported together, `file:line:column` locations, "did you mean" suggestions; nothing printed by the library |
 | Tests | Unit tests, integration tests over `examples/`, optional corpus test |
@@ -218,6 +219,112 @@ validated. The grammar is rejected (with every problem listed) if, for example:
   can never be used;
 - no input could ever satisfy the grammar.
 
+## Units of Measure
+
+Measure keywords can declare their physical dimension in the grammar. The
+units written in the input file are then validated when the grammar is
+attached (all errors reported together), and the values are converted to SI
+when read: no unit handling is needed in user code.
+
+```cpp
+#include "DictionaryUnits.h"
+using namespace OpenSMOKEpp;
+namespace dim = OpenSMOKEpp::units::dim;
+
+// Grammar
+AddKeyWord(DictionaryKeyWord("@FuelVelocity", SINGLE_MEASURE, "Fuel velocity", true)
+               .SetDimension(dim::Velocity));
+AddKeyWord(DictionaryKeyWord("@Temperature", SINGLE_MEASURE, "Inlet temperature", true)
+               .SetDimension(dim::Temperature));
+AddKeyWord(DictionaryKeyWord("@SnapshotTimes", VECTOR_MEASURE, "Snapshot times", false)
+               .SetDimension(dim::Time));
+
+// Input:  @FuelVelocity 19.5 cm/s;  @Temperature 25 C;  @SnapshotTimes 1 2 5 min;
+// (values are SI; amounts of substance in kmol, see below)
+double velocity, temperature;            // 0.195 m/s, 298.15 K
+std::vector<double> times;               // 60, 120, 300 s
+dictionary.ReadMeasure("@FuelVelocity", velocity);
+dictionary.ReadMeasure("@Temperature", temperature);
+dictionary.ReadMeasures("@SnapshotTimes", times);
+```
+
+- `ReadMeasure(name, value, dimension)` and `ReadMeasures(name, values,
+  dimension)` take the expected dimension explicitly, for grammars that do
+  not declare it. If the grammar does declare one, both must agree.
+- The legacy `ReadMeasure(name, value, units)` is unchanged and returns the
+  raw magnitude and unit string.
+- Lists of measures accept pairs (`1 m 20 cm`) or numbers followed by one
+  shared unit (`1000 1100 1200 K`).
+- Grammar files declare a dimension with an optional eighth line after the
+  seven keyword lines: `dimension: m/s` (or `dimension: K difference`).
+- `units::to_si(value, "cm/s", dim::Velocity)` and `units::from_si` are
+  available for units found elsewhere (e.g. a separate `@XUnits` keyword).
+- Mismatches are explicit: `line 12, keyword @FuelVelocity: units 'K'
+  (temperature [K]) are not compatible with the expected velocity [m/s]`;
+  misspelled symbols get a suggestion (`'Kg' (did you mean 'kg'?)`).
+
+### Dimensions
+
+`units::dim` provides the base dimensions (`Length`, `Mass`, `Time`,
+`Temperature`, `Amount`, `Current`, `LuminousIntensity`), `Dimensionless`,
+and common derived ones: `Area`, `Volume`, `Velocity`, `Acceleration`,
+`Frequency`, `Force`, `Pressure`, `Energy`, `Power`, `Density`,
+`Concentration`, `MolarMass`, `MassFlowRate`, `MolarFlowRate`,
+`VolumetricFlowRate`, `MassFlux`, `HeatFlux`, `HeatTransferCoefficient`,
+`ThermalConductivity`, `DynamicViscosity`, `KinematicViscosity`,
+`Diffusivity`, `SurfaceTension`, `SpecificEnergy`, `MolarEnergy`,
+`HeatCapacity`, `SpecificHeatCapacity`, `MolarHeatCapacity`, `HeatingRate`,
+and more. Others are composed at compile time:
+`dim::Mass / dim::Volume / dim::Time.pow({2, 1})`. Exponents are rational
+(`m2/s^0.5/kg`, `sqrt(K)`).
+
+**Temperatures.** `dim::Temperature` is an absolute temperature: `25 C` →
+298.15 K, `32 F` → 273.15 K. `dim::TemperatureDifference` is an interval:
+`10 C` → 10 K, `18 F` → 10 K. Inside compound units (`W/m2/C`, `C/min`) the
+Celsius and Fahrenheit symbols always denote intervals.
+
+**Amount of substance.** Following the convention of the whole OpenSMOKE++
+framework, amounts are expressed in **kilomoles** by default: `30 kcal/mol` →
+1.2552e8 J/kmol, `28 g/mol` → 28 kg/kmol, `1 mol/cm3` → 1000 kmol/m3. All
+other quantities are plain SI. Strict SI (mole) is available with
+`manager.SetUnitSystem(units::si)` (all dictionaries, including those loaded
+later) or `dictionary.SetUnitSystem(units::si)`; `units::to_si`,
+`units::from_si`, `units::si_unit` and `units::describe` take the system as an
+optional last argument (default `units::si_kmol`).
+
+### Unit Syntax
+
+- Products: `.`, `*` or `·` (`Pa.s`, `kg*m`); each `/` divides by the next
+  factor only, so `kg/m3/s2` is kg·m⁻³·s⁻² and `W/m2/K` is W·m⁻²·K⁻¹;
+  parentheses group: `W/(m2.K)`.
+- Exponents: glued (`m3`, `s-1`, `s0.5`) or with `^` (`m^3`, `s^-1`,
+  `s^(1/2)`); `sqrt(...)` is the power ½. A number is a pure factor (`1/s`).
+- Symbols are **case-sensitive** (`Pa`, not `pa`; `kg`, not `Kg`).
+
+### Unit Symbols
+
+| Quantity | Symbols (`*` = accepts SI prefixes) |
+| --- | --- |
+| Length | `m*`, `micron`, `angstrom`, `in`, `ft` |
+| Mass | `g*` (so `kg`, `mg`), `lb` (0.45359237 kg), `oz` (avoirdupois) |
+| Time | `s*`, `min`, `h`, `hr` |
+| Temperature | `K*`, `C`, `°C`, `degC`, `F`, `°F`, `degF`, `R` (Rankine) |
+| Amount | `mol*` (so `kmol`) |
+| Current, luminous intensity | `A*`, `cd*` |
+| Volume | `L*`, `l*` (litre), or any length cubed (`cm3`, `dm3`) |
+| Frequency | `Hz*`, `rpm` (2π/60 rad/s) |
+| Force | `N*`, `dyn` |
+| Pressure | `Pa*`, `bar*`, `atm`, `torr` (atm/760), `mmHg`, `psi` |
+| Energy | `J*`, `Wh*` (so `kWh`), `cal*` (thermochemical, 4.184 J), `eV*`, `erg`, `BTU` (IT) |
+| Power | `W*` |
+| Angle | `rad`, `deg`, `°` (dimensionless) |
+| Dimensionless | `-`, `dimensionless`, `#`, `%`, `ppm` |
+
+SI prefixes: `Y Z E P T G M k h da d c m u µ n p f a`. An exact symbol always
+takes precedence over a prefixed reading (`min` is the minute, `Pa` the
+pascal, `h` the hour while `hPa` is the hectopascal). Not supported on
+purpose, because they are ambiguous: `M` (molar), gallons, coulomb, farad.
+
 ## Build
 
 ### Requirements
@@ -265,8 +372,9 @@ integration. From the build directory:
 ctest --output-on-failure
 ```
 
-- `Unit_*`: lexer, syntax, `#include`, typed reads, grammar coherence and
-  dictionary validation (`unit_tests [suite...]` runs selected suites).
+- `Unit_*`: lexer, syntax, `#include`, typed reads, grammar coherence,
+  dictionary validation, units and measures (`unit_tests [suite...]` runs
+  selected suites).
 - `Test_Example_*`: parse the input files in `examples/`, including a
   grammar-aware test for `input3.dic`.
 - `Test_Corpus`: parses every `*.dic` file below `DICTIONARY_PARSER_CORPUS_DIR`
@@ -299,7 +407,8 @@ Then include public headers:
 | `DictionaryManager.h` | Reads files or strings (with includes) and owns parsed dictionaries |
 | `Dictionary.h` | Provides keyword lookup, grammar validation, and typed reads |
 | `DictionaryGrammar.h` | Base class for user-defined grammar rules and coherence checks |
-| `DictionaryKeyWord.h` | Keyword metadata and expected value types |
+| `DictionaryKeyWord.h` | Keyword metadata, expected value types and dimensions |
+| `DictionaryUnits.h` | Dimensions, unit parsing and conversion to SI |
 | `DictionaryInputFile.h` | Preprocessed input-file representation |
 | `DictionaryLexer.h` | Tokenizer, `SyntaxError`, and low-level lexical utilities |
 

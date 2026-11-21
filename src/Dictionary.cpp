@@ -35,6 +35,7 @@
 
 #include "Dictionary.h"
 #include "DictionaryLexer.h"
+#include "DictionaryUnits.h"
 
 #include <algorithm>
 #include <charconv>
@@ -102,6 +103,56 @@ template <typename Number>
 [[nodiscard]] auto quote(const std::string_view token) -> std::string {
   return "'" + std::string(token) + "'";
 }
+
+[[nodiscard]] auto is_number(const std::string_view token) noexcept -> bool {
+  double value = 0.0;
+  return parse_number(token, value);
+}
+
+// Splits the tokens of a list of measures. Two layouts are accepted:
+// pairs "1 m 20 cm" or numbers followed by one shared unit "1 2 3 m".
+[[nodiscard]] auto split_measures(const std::vector<std::string> &tokens,
+                                  std::vector<double> &values,
+                                  std::vector<std::string> &units)
+    -> std::optional<std::string> {
+  const std::size_t n = tokens.size();
+  values.clear();
+  units.clear();
+  const char *layout = "pairs of a number and units (e.g. '1 m 20 cm') or "
+                       "numbers followed by one unit (e.g. '1000 1100 K') are "
+                       "required";
+  if (n < 2)
+    return std::string(layout) + ", but " + std::to_string(n) +
+           " value(s) were given";
+
+  bool shared = !is_number(tokens.back());
+  for (std::size_t i = 0; i + 1 < n && shared; ++i)
+    shared = is_number(tokens[i]);
+  if (shared) {
+    values.resize(n - 1);
+    for (std::size_t i = 0; i + 1 < n; ++i)
+      (void)parse_number(tokens[i], values[i]);
+    units.assign(n - 1, tokens.back());
+    return std::nullopt;
+  }
+
+  if (n % 2 != 0)
+    return std::string(layout) + ", but " + std::to_string(n) +
+           " values were given";
+  values.resize(n / 2);
+  units.resize(n / 2);
+  for (std::size_t i = 0; i < n; i += 2) {
+    if (!parse_number(tokens[i], values[i / 2]))
+      return "measure " + std::to_string(i / 2 + 1) +
+             " must start with a finite number, but " + quote(tokens[i]) +
+             " was given";
+    if (is_number(tokens[i + 1]))
+      return "measure " + std::to_string(i / 2 + 1) +
+             " has no units: " + std::string(layout);
+    units[i / 2] = tokens[i + 1];
+  }
+  return std::nullopt;
+}
 } // namespace
 
 void Dictionary::ErrorMessage(std::string_view message) const {
@@ -155,7 +206,7 @@ void Dictionary::Summary(std::ostream &fout) const {
 void Dictionary::Checks() {
   if (grammar_.HasHelpKeyWord(keywords_))
     ErrorMessage("Simulation stopped because the user requested @Help.\n" +
-                 grammar_.AvailableKeyWordsTable(name_));
+                 grammar_.AvailableKeyWordsTable(name_, unit_system_));
 
   std::vector<std::string> problems;
   const auto append = [&problems](std::vector<std::string> more) {
@@ -168,6 +219,7 @@ void Dictionary::Checks() {
   append(grammar_.CollectCompulsoryErrors(keywords_));
   append(grammar_.CollectRequiredErrors(keywords_));
   append(grammar_.CollectConflictErrors(keywords_));
+  append(CollectMeasureErrors());
 
   if (problems.empty())
     return;
@@ -178,7 +230,7 @@ void Dictionary::Checks() {
   for (const auto &problem : problems)
     message += "\n  - " + problem;
   if (has_undefined)
-    message += "\n" + grammar_.AvailableKeyWordsTable(name_);
+    message += "\n" + grammar_.AvailableKeyWordsTable(name_, unit_system_);
   ErrorMessage(message);
 }
 
@@ -524,21 +576,142 @@ void Dictionary::ReadOption(std::string_view name_of_keyword,
                             std::vector<double> &values,
                             std::vector<std::string> &names) {
   const std::size_t index = CheckOption(name_of_keyword, VECTOR_MEASURE);
-  const auto &tokens = values_[index];
-  const std::size_t n = tokens.size();
-  if (n == 0 || n % 2 != 0)
-    EntryError(index, "pairs of a number and units are required, e.g. "
-                      "'1 m 2 cm', but " +
-                          std::to_string(n) + " values were given");
-  names.resize(n / 2);
-  values.resize(n / 2);
-  for (std::size_t i = 0; i < n; i += 2) {
-    if (!parse_number(tokens[i], values[i / 2]))
-      EntryError(index, "measure " + std::to_string(i / 2 + 1) +
-                            " must start with a finite number, but " +
-                            quote(tokens[i]) + " was given");
-    names[i / 2] = tokens[i + 1];
+  if (const auto error = split_measures(values_[index], values, names))
+    EntryError(index, *error);
+}
+
+auto Dictionary::ResolveDimension(std::string_view name_of_keyword,
+                                  const units::Dimension *expected) const
+    -> units::Dimension {
+  const DictionaryKeyWord *declared = grammar_.FindKeyWord(name_of_keyword);
+  const auto &grammar_dimension = declared->dimension();
+  if (grammar_dimension && expected != nullptr) {
+    if (!(*grammar_dimension == *expected) ||
+        grammar_dimension->temperature_difference !=
+            expected->temperature_difference)
+      ErrorMessage("the keyword " + std::string(name_of_keyword) +
+                   " is declared with dimension " +
+                   units::describe(*grammar_dimension) +
+                   " in the grammar, but it was read as " +
+                   units::describe(*expected));
+    return *grammar_dimension;
   }
+  if (grammar_dimension)
+    return *grammar_dimension;
+  if (expected != nullptr)
+    return *expected;
+  ErrorMessage("the keyword " + std::string(name_of_keyword) +
+               " declares no dimension in the grammar: declare it with "
+               "DictionaryKeyWord::SetDimension() (or a 'dimension:' line in a "
+               "grammar file), or pass the expected dimension to the read "
+               "function");
+}
+
+void Dictionary::ReadMeasure(std::string_view name_of_keyword, double &value) {
+  const std::size_t index = CheckOption(name_of_keyword, SINGLE_MEASURE);
+  const units::Dimension dimension = ResolveDimension(name_of_keyword, nullptr);
+  double magnitude = 0.0;
+  std::string unit;
+  ReadMeasure(name_of_keyword, magnitude, unit);
+  try {
+    value = units::to_si(magnitude, unit, dimension, unit_system_);
+  } catch (const units::UnitError &error) {
+    EntryError(index, error.what());
+  }
+}
+
+void Dictionary::ReadMeasure(std::string_view name_of_keyword, double &value,
+                             const units::Dimension &expected) {
+  const std::size_t index = CheckOption(name_of_keyword, SINGLE_MEASURE);
+  const units::Dimension dimension =
+      ResolveDimension(name_of_keyword, &expected);
+  double magnitude = 0.0;
+  std::string unit;
+  ReadMeasure(name_of_keyword, magnitude, unit);
+  try {
+    value = units::to_si(magnitude, unit, dimension, unit_system_);
+  } catch (const units::UnitError &error) {
+    EntryError(index, error.what());
+  }
+}
+
+void Dictionary::ReadMeasures(std::string_view name_of_keyword,
+                              std::vector<double> &values) {
+  const std::size_t index = CheckOption(name_of_keyword, VECTOR_MEASURE);
+  const units::Dimension dimension = ResolveDimension(name_of_keyword, nullptr);
+  std::vector<std::string> unit_names;
+  ReadOption(name_of_keyword, values, unit_names);
+  try {
+    for (std::size_t i = 0; i < values.size(); ++i)
+      values[i] = units::to_si(values[i], unit_names[i], dimension, unit_system_);
+  } catch (const units::UnitError &error) {
+    EntryError(index, error.what());
+  }
+}
+
+void Dictionary::ReadMeasures(std::string_view name_of_keyword,
+                              std::vector<double> &values,
+                              const units::Dimension &expected) {
+  const std::size_t index = CheckOption(name_of_keyword, VECTOR_MEASURE);
+  const units::Dimension dimension =
+      ResolveDimension(name_of_keyword, &expected);
+  std::vector<std::string> unit_names;
+  ReadOption(name_of_keyword, values, unit_names);
+  try {
+    for (std::size_t i = 0; i < values.size(); ++i)
+      values[i] = units::to_si(values[i], unit_names[i], dimension, unit_system_);
+  } catch (const units::UnitError &error) {
+    EntryError(index, error.what());
+  }
+}
+
+auto Dictionary::CollectMeasureErrors() const -> std::vector<std::string> {
+  std::vector<std::string> messages;
+  for (std::size_t i = 0; i < keywords_.size(); ++i) {
+    const DictionaryKeyWord *declared = grammar_.FindKeyWord(keywords_[i]);
+    if (declared == nullptr || !declared->dimension())
+      continue;
+    const units::Dimension &dimension = *declared->dimension();
+    const std::string where = "line " + std::to_string(starting_lines_[i]) +
+                              ", keyword " + keywords_[i] + ": ";
+    const auto &tokens = values_[i];
+
+    std::vector<std::string> unit_names;
+    if (declared->type() == SINGLE_MEASURE) {
+      double magnitude = 0.0;
+      if (tokens.size() != 2) {
+        messages.push_back(where +
+                           "a measure requires exactly two values (number "
+                           "and units, e.g. '300 K'), but " +
+                           std::to_string(tokens.size()) + " were given");
+        continue;
+      }
+      if (!parse_number(tokens[0], magnitude)) {
+        messages.push_back(where +
+                           "the magnitude of a measure must be a finite "
+                           "number, but " +
+                           quote(tokens[0]) + " was given");
+        continue;
+      }
+      unit_names.push_back(tokens[1]);
+    } else {
+      std::vector<double> magnitudes;
+      if (const auto error = split_measures(tokens, magnitudes, unit_names)) {
+        messages.push_back(where + *error);
+        continue;
+      }
+    }
+
+    std::vector<std::string> checked;
+    for (const auto &unit : unit_names) {
+      if (std::find(checked.begin(), checked.end(), unit) != checked.end())
+        continue;
+      checked.push_back(unit);
+      if (const auto error = units::check_unit(unit, dimension))
+        messages.push_back(where + *error);
+    }
+  }
+  return messages;
 }
 
 } // namespace OpenSMOKEpp

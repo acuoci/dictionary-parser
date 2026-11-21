@@ -268,6 +268,21 @@ public:
   [[nodiscard]] bool has_grammar() const noexcept { return has_grammar_; }
 
   /**
+   * \brief Selects the target unit system of the converting reads.
+   *
+   * \param[in] system `units::si_kmol` (kilomole, the OpenSMOKE++
+   * convention and the default) or `units::si` (strict SI, mole).
+   */
+  void SetUnitSystem(const units::UnitSystem &system) noexcept {
+    unit_system_ = system;
+  }
+
+  /** \brief Returns the target unit system of the converting reads. */
+  [[nodiscard]] const units::UnitSystem &unit_system() const noexcept {
+    return unit_system_;
+  }
+
+  /**
    * \brief Reads one integer option.
    *
    * \param[in] option Keyword name including leading `@`.
@@ -357,6 +372,64 @@ public:
    * or convert units.
    */
   void ReadMeasure(std::string_view option, double &value, std::string &units);
+
+  /**
+   * \brief Reads one measured scalar and converts it to SI.
+   *
+   * The expected dimension is the one declared in the grammar with
+   * `DictionaryKeyWord::SetDimension` (or a `dimension:` line in a grammar
+   * file). For example `@Velocity 19.5 cm/s;` gives `0.195` when the
+   * keyword is declared with `units::dim::Velocity`.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \param[out] value Value in SI units.
+   * \warning Throws `std::runtime_error` if the keyword declares no
+   * dimension, if the units are unknown or have a different dimension, or for
+   * the same reasons as `ReadMeasure(name, value, units)`.
+   */
+  void ReadMeasure(std::string_view name_of_keyword, double &value);
+
+  /**
+   * \brief Reads one measured scalar and converts it to SI, with an explicit
+   * expected dimension.
+   *
+   * Useful for grammars that do not declare dimensions. If the grammar does
+   * declare one, it must be identical to `expected`.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \param[out] value Value in SI units.
+   * \param[in] expected Expected dimension.
+   * \warning Throws `std::runtime_error` as `ReadMeasure(name, value)`.
+   */
+  void ReadMeasure(std::string_view name_of_keyword, double &value,
+                   const units::Dimension &expected);
+
+  /**
+   * \brief Reads a list of measures (`vector_measure`) converted to SI.
+   *
+   * Two layouts are accepted: pairs of number and units (`1 m 20 cm`) or
+   * numbers followed by one shared unit (`1000 1100 1200 K`).
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \param[out] values Values in SI units.
+   * \warning Throws `std::runtime_error` if the keyword declares no
+   * dimension or a value or unit is invalid.
+   */
+  void ReadMeasures(std::string_view name_of_keyword,
+                    std::vector<double> &values);
+
+  /**
+   * \brief Reads a list of measures converted to SI, with an explicit
+   * expected dimension.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \param[out] values Values in SI units.
+   * \param[in] expected Expected dimension (must match the grammar's, if
+   * declared).
+   */
+  void ReadMeasures(std::string_view name_of_keyword,
+                    std::vector<double> &values,
+                    const units::Dimension &expected);
 
   /**
    * \brief Reads one dictionary-name option.
@@ -493,6 +566,9 @@ private:
   /** \brief Whether a grammar was successfully attached. */
   bool has_grammar_ = false;
 
+  /** \brief Target unit system of the converting reads. */
+  units::UnitSystem unit_system_{};
+
 private:
   /**
    * \brief Validates this dictionary against the current grammar.
@@ -535,6 +611,27 @@ private:
    */
   [[noreturn]] void EntryError(std::size_t index,
                                std::string_view message) const;
+
+  /**
+   * \brief Determines the dimension used to convert a measure keyword.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \param[in] expected Explicit dimension requested by the caller, or
+   * `nullptr` to use the grammar's.
+   * \return The dimension to use.
+   * \warning Throws `std::runtime_error` if neither is available or if they
+   * differ.
+   */
+  [[nodiscard]] auto ResolveDimension(std::string_view name_of_keyword,
+                                      const units::Dimension *expected) const
+      -> units::Dimension;
+
+  /**
+   * \brief Validates the units of measure keywords declaring a dimension.
+   *
+   * \return One message per invalid entry.
+   */
+  [[nodiscard]] auto CollectMeasureErrors() const -> std::vector<std::string>;
 
   /**
    * \brief Diagnoses a failed typed lookup without throwing.

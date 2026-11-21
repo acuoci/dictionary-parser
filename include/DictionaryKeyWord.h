@@ -37,9 +37,12 @@
 #define OpenSMOKEpp_DictionaryKeyWord_H
 
 #include <iosfwd>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "DictionaryUnits.h"
 
 namespace OpenSMOKEpp {
 /**
@@ -169,6 +172,50 @@ public:
   virtual ~DictionaryKeyWord() = default;
 
   /**
+   * \brief Declares the physical dimension of a measure keyword.
+   *
+   * Only `SINGLE_MEASURE` and `VECTOR_MEASURE` keywords can carry a
+   * dimension. When a dimension is declared, the units written in the input
+   * file are validated when the grammar is attached, and
+   * `Dictionary::ReadMeasure(name, value)` / `Dictionary::ReadMeasures`
+   * return values converted to SI.
+   *
+   * \code
+   * AddKeyWord(DictionaryKeyWord("@FuelVelocity", SINGLE_MEASURE,
+   *                              "Fuel velocity", true)
+   *                .SetDimension(units::dim::Velocity));
+   * \endcode
+   *
+   * \param[in] dimension Expected dimension (`units::dim::Temperature` for an
+   * absolute temperature, `units::dim::TemperatureDifference` for an
+   * interval).
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetDimension(const units::Dimension &dimension) {
+    dimension_ = dimension;
+    return *this;
+  }
+
+  /**
+   * \brief Returns the declared dimension, if any.
+   *
+   * \return Dimension declared with `SetDimension` or a grammar file.
+   */
+  [[nodiscard]] const std::optional<units::Dimension> &
+  dimension() const noexcept {
+    return dimension_;
+  }
+
+  /**
+   * \brief Parses and stores an optional `dimension:` grammar-file line.
+   *
+   * \param[in] line Line of the form `dimension: <SI unit expression>
+   * [difference]`, e.g. `dimension: m/s` or `dimension: K difference`.
+   * \warning Throws `std::runtime_error` if the line is malformed.
+   */
+  void SetDimensionFromLine(const std::string &line);
+
+  /**
    * \brief Writes a compact keyword summary.
    *
    * \param[out] fout Stream receiving name, type, and short comment.
@@ -278,6 +325,9 @@ private:
 
   /** \brief Keywords mutually exclusive with this keyword. */
   std::vector<std::string> conflicting_keywords_;
+
+  /** \brief Physical dimension of a measure keyword. */
+  std::optional<units::Dimension> dimension_;
 
 private:
   /**

@@ -82,7 +82,9 @@ public:
    * \param[in] file_name Path to the grammar definition file.
    * \warning Throws `std::runtime_error` if the file cannot be read, if a
    * keyword block is malformed, or if grammar coherence checks fail.
-   * \note Each keyword block is expected to contain seven lines.
+   * \note Each keyword block is expected to contain seven lines, optionally
+   * followed by an eighth line `dimension: <SI unit> [difference]` for
+   * measure keywords (e.g. `dimension: m/s`).
    */
   void ReadFromFile(std::string_view file_name);
 
@@ -105,10 +107,13 @@ public:
    *
    * \param[in] dictionary_name Name shown in the title; the grammar name is
    * used when empty.
+   * \param[in] system Unit system used to show the units of measure
+   * keywords.
    * \return Multi-line table with keyword names, types, and comments.
    */
   [[nodiscard]] std::string
-  AvailableKeyWordsTable(std::string_view dictionary_name = {}) const;
+  AvailableKeyWordsTable(std::string_view dictionary_name = {},
+                         const units::UnitSystem &system = units::si_kmol) const;
 
   /**
    * \brief Finds the rule of a keyword.

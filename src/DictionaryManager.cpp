@@ -136,6 +136,7 @@ void DictionaryManager::Load(std::string_view text,
     Dictionary dictionary;
     dictionary.SetName(block.name);
     dictionary.SetFileName(display_name);
+    dictionary.SetUnitSystem(unit_system_);
     dictionary.SetDictionary(std::move(keywords), std::move(options),
                              std::move(values), std::move(starting_lines),
                              std::move(ending_lines));
@@ -185,6 +186,12 @@ Dictionary &DictionaryManager::operator()(std::string_view name) {
   if (it == map_of_dictionaries_.end())
     ErrorMessage("The " + std::string(name) + " dictionary was not defined.");
   return it->second;
+}
+
+void DictionaryManager::SetUnitSystem(const units::UnitSystem &system) {
+  unit_system_ = system;
+  for (auto &[name, dictionary] : map_of_dictionaries_)
+    dictionary.SetUnitSystem(system);
 }
 
 bool DictionaryManager::contains(std::string_view name) const {

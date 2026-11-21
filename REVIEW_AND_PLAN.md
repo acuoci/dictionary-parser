@@ -12,6 +12,43 @@ Scope of the study:
 
 ## 0. Progress log
 
+### Phase 5 (units): done (branch `feature/units`, 2026-11-21)
+
+This phase was brought forward, ahead of Phases 2–4, at the user's request.
+
+Delivered:
+- **New public header** `DictionaryUnits.h`:
+  - compile-time dimension algebra with rational exponents;
+  - about 40 predefined dimensions;
+  - a run-time parser for unit expressions (OpenSMOKE++ conventions, parentheses, `^`, `sqrt`);
+  - case-sensitive symbols with SI prefixes and spelling suggestions;
+  - absolute temperatures versus temperature differences;
+  - a selectable amount base. The default is the **kilomole** (`units::si_kmol`), the convention of the whole OpenSMOKE++ framework, chosen by the user; strict SI (`units::si`, mole) is opt-in.
+  - the thermochemical calorie (4.184 J), chosen by the user.
+- **Grammar integration:**
+  - `DictionaryKeyWord::SetDimension(dim::...)`, or an optional `dimension:` line in grammar files;
+  - the grammar check rejects a dimension on non-measure keywords;
+  - declared units are validated when the grammar is attached, together with all the other errors;
+  - the `@Help` table shows the SI unit.
+- **New reads:**
+  - `Dictionary::ReadMeasure(name, value)` and `ReadMeasures(name, values)` convert to SI;
+  - variants take an explicit dimension;
+  - `units::to_si` / `from_si` / `check_unit`;
+  - `SetUnitSystem` on the dictionary and on the manager.
+- **Lists of measures** accept pairs or a shared trailing unit (`1000 1100 K`), including in the legacy `ReadOption(values, units)`.
+
+Verification:
+- 18 new test cases. They include a check that every conversion factor follows its exact definition (NIST SP 811 values, temperature fixed points, and the gas constant expressed in six different unit systems).
+- 13/13 CTest targets pass, also with ASan/UBSan and `-Werror`.
+- MOM's dictionary test still passes.
+- **Cross-check against OpenSMOKE++2's `Conversions.cpp`** (205 unit/quantity pairs, default kmol system): 149 are identical and 5 are unsupported on purpose (gallons, volumetric ounces). The rest differ only by constant choices:
+  - thermochemical calorie 4.184 J versus 4.18443 J (relative difference 1e-4);
+  - `lb` exact versus 0.454 (9e-4), and `oz` (2e-5);
+  - updated `BTU`, `eV`, `torr` and `psi` (below 1e-7);
+  - `km/hr` and `km2/hr`, which are wrong in OpenSMOKE++2 (`m_from_km = 0.3048`).
+- **With the kmol default, molar quantities agree with OpenSMOKE++2.** Strict SI (`units::si`) differs by the expected factor of 1000 per mole.
+- **All 29 unit strings used in the 147 corpus input files parse.** Two OpenSMOKE++2 examples (`perfectlystirredreactor/06a`, `06b`) write `kcal/m2/K` for a heat-transfer coefficient, which has no time dimension. Once that keyword declares `dim::HeatTransferCoefficient`, they will be rejected and must use `kcal/m2/K/s`. The solver code for that keyword uses yet another calorie value (4186.8 J/kcal).
+
 ### Phase 0 + Phase 1: done (branch `feature/phase-0-1`, 2026-11-21)
 
 Decisions taken: **C++20** baseline; input-format extensions **a, b, c and d**
