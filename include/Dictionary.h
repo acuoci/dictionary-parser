@@ -41,6 +41,7 @@
 #include <filesystem>
 #include <iosfwd>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -75,7 +76,11 @@ public:
     /** \brief The option has an invalid number of tokens. */
     BadTokenCount,
     /** \brief A token failed numeric conversion or finite-value validation. */
-    BadNumber
+    BadNumber,
+    /** \brief No grammar is attached to the dictionary. */
+    NoGrammar,
+    /** \brief The requested keyword is not declared in the grammar. */
+    UndeclaredKeyword
   };
 
   /**
@@ -195,14 +200,34 @@ public:
   /**
    * \brief Sets parsed keyword data and source line ranges.
    *
+   * Value tokens are obtained by splitting each option on blanks (no quote
+   * processing).
+   *
    * \param[in] keywords Keyword names, each including leading `@`.
    * \param[in] options Raw option strings with trailing semicolons removed.
    * \param[in] starting_lines 1-based original start line for each keyword.
    * \param[in] ending_lines 1-based original end line for each keyword.
-   * \warning All vectors must have identical size.
+   * \warning Throws `std::invalid_argument` if the vectors differ in size.
    */
   void SetDictionary(std::vector<std::string> keywords,
                      std::vector<std::string> options,
+                     std::vector<unsigned int> starting_lines,
+                     std::vector<unsigned int> ending_lines);
+
+  /**
+   * \brief Sets parsed keyword data with explicit value tokens.
+   *
+   * \param[in] keywords Keyword names, each including leading `@`.
+   * \param[in] options Option text as written (quotes kept), tokens joined
+   * by single blanks.
+   * \param[in] values Value tokens of each keyword (quotes removed).
+   * \param[in] starting_lines 1-based original start line for each keyword.
+   * \param[in] ending_lines 1-based original end line for each keyword.
+   * \warning Throws `std::invalid_argument` if the vectors differ in size.
+   */
+  void SetDictionary(std::vector<std::string> keywords,
+                     std::vector<std::string> options,
+                     std::vector<std::vector<std::string>> values,
                      std::vector<unsigned int> starting_lines,
                      std::vector<unsigned int> ending_lines);
 
@@ -233,7 +258,14 @@ public:
    * \return `true` if the keyword exists, otherwise `false`.
    * \note This function is `[[nodiscard]]`.
    */
-  [[nodiscard]] bool CheckOption(std::string_view name_of_keyword);
+  [[nodiscard]] bool CheckOption(std::string_view name_of_keyword) const;
+
+  /**
+   * \brief Tests whether a grammar has been successfully attached.
+   *
+   * \return `true` after a successful `SetGrammar` call.
+   */
+  [[nodiscard]] bool has_grammar() const noexcept { return has_grammar_; }
 
   /**
    * \brief Reads one integer option.
@@ -289,8 +321,8 @@ public:
    *
    * \param[in] option Keyword name including leading `@`.
    * \param[out] value Parsed boolean.
-   * \warning Accepted true tokens are `true` and `on`; accepted false
-   * tokens are `false` and `off`.
+   * \note Accepted true tokens are `true` and `on`; accepted false
+   * tokens are `false` and `off`. Matching is case-insensitive.
    */
   void ReadBool(std::string_view option, bool &value);
 
@@ -299,8 +331,9 @@ public:
    *
    * \param[in] name_of_keyword Keyword name including leading `@`.
    * \param[out] value Parsed filesystem path.
-   * \note The raw option string is preserved as the path; no existence check
-   * is performed.
+   * \note A single (possibly quoted) token is used verbatim, so a quoted
+   * path may contain blanks. Several unquoted tokens are joined with single
+   * blanks (legacy behavior). No existence check is performed.
    */
   void ReadPath(std::string_view name_of_keyword, std::filesystem::path &value);
 
@@ -309,7 +342,8 @@ public:
    *
    * \param[in] name_of_keyword Keyword name including leading `@`.
    * \param[out] value Raw option string after semicolon removal.
-   * \note This preserves internal whitespace-normalized token order.
+   * \note Tokens are returned as written (quotes kept), joined by single
+   * blanks.
    */
   void ReadSequence(std::string_view name_of_keyword, std::string &value);
 
@@ -450,8 +484,14 @@ private:
   /** \brief 1-based end line for each parsed keyword. */
   std::vector<unsigned int> ending_lines_;
 
+  /** \brief Value tokens (quotes removed) corresponding to `keywords_`. */
+  std::vector<std::vector<std::string>> values_;
+
   /** \brief Grammar used for validation and typed-read checks. */
   DictionaryGrammar grammar_;
+
+  /** \brief Whether a grammar was successfully attached. */
+  bool has_grammar_ = false;
 
 private:
   /**
@@ -469,13 +509,14 @@ private:
    * \param[in] name_of_keyword Keyword name including leading `@`.
    * \param[in] expected_type Expected grammar value type.
    * \return Zero-based index into `keywords_` and `options_`.
-   * \warning Throws `std::runtime_error` if the keyword is absent or has a
-   * different grammar type.
+   * \warning Throws `std::runtime_error` if no grammar is attached, if the
+   * keyword is not declared in the grammar, if its declared type differs
+   * from `expected_type`, or if it is absent from the dictionary.
    * \note This function is `[[nodiscard]]`.
    */
   [[nodiscard]] std::size_t
   CheckOption(std::string_view name_of_keyword,
-              const DictionaryKeyWordTypes expected_type);
+              const DictionaryKeyWordTypes expected_type) const;
 
   /**
    * \brief Raises a dictionary-scoped error.
@@ -483,7 +524,30 @@ private:
    * \param[in] message Diagnostic message without dictionary context.
    * \warning Always throws `std::runtime_error`.
    */
-  void ErrorMessage(std::string_view message) const;
+  [[noreturn]] void ErrorMessage(std::string_view message) const;
+
+  /**
+   * \brief Raises an error about the value of one keyword entry.
+   *
+   * \param[in] index Entry index.
+   * \param[in] message Diagnostic message.
+   * \warning Always throws `std::runtime_error`.
+   */
+  [[noreturn]] void EntryError(std::size_t index,
+                               std::string_view message) const;
+
+  /**
+   * \brief Diagnoses a failed typed lookup without throwing.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \param[in] expected_type Expected grammar value type.
+   * \param[out] index Entry index on success.
+   * \return Empty optional on success, otherwise the error.
+   */
+  [[nodiscard]] auto Lookup(std::string_view name_of_keyword,
+                            DictionaryKeyWordTypes expected_type,
+                            std::size_t &index) const
+      -> std::optional<ParseError>;
 };
 } // namespace OpenSMOKEpp
 

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC 11 (oldest supported)
+            os: ubuntu-22.04
+            cxx: g++-11
+            sanitize: OFF
+          - name: GCC 14
+            os: ubuntu-24.04
+            cxx: g++-14
+            sanitize: OFF
+          - name: Clang 18 + sanitizers
+            os: ubuntu-24.04
+            cxx: clang++-18
+            sanitize: ON
+          - name: GCC 14 + sanitizers
+            os: ubuntu-24.04
+            cxx: g++-14
+            sanitize: ON
+          - name: macOS (Apple Clang)
+            os: macos-latest
+            cxx: clang++
+            sanitize: OFF
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DDICTIONARY_PARSER_WARNINGS_AS_ERRORS=ON
+          -DDICTIONARY_PARSER_SANITIZE=${{ matrix.sanitize }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

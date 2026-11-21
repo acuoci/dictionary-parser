@@ -38,6 +38,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -100,10 +101,11 @@ struct PreprocessedFile {
  * \brief Removes a dictionary line comment from a character sequence.
  *
  * \param[in] text Input line.
- * \return A view ending before the first `//` marker, or the full input view
- * if no marker exists.
- * \warning The dictionary syntax has no string-literal escape rule; `//`
- * always starts a comment.
+ * \return A view ending before the first `//` marker that starts a comment,
+ * or the full input view if there is none.
+ * \note A `//` starts a comment only at the start of a token (at the line
+ * start, after a blank, `;`, `{`, `}`, or a closing quote) and never inside a
+ * double-quoted string. In `http://host` it is part of the word.
  * \note This function is `[[nodiscard]]` and `noexcept`.
  */
 [[nodiscard]] auto strip_comment(std::string_view text) noexcept
@@ -218,13 +220,108 @@ auto replace_tabs_with_spaces(std::string &text) noexcept -> void;
  * \return Preprocessed file lines and line-index metadata.
  * \warning Throws `std::runtime_error` if the file cannot be opened or an
  * I/O error occurs while reading.
- * \note This function strips `//` comments and replaces tabs with spaces,
+ * \note This function strips `//` comments (with the same token-start rule
+ * used by `tokenize`) and replaces tabs with spaces,
  * but does not parse dictionary blocks or keyword values.
  * \note This function is `[[nodiscard]]`.
  */
 [[nodiscard]] auto
 read_and_preprocess_file(const std::filesystem::path &file_name)
     -> PreprocessedFile;
+
+/**
+ * \brief Exception raised for lexical and syntactic errors in input files.
+ *
+ * The message has the compiler-like form `file:line:column: error: text`.
+ * The individual location fields are available for programmatic handling.
+ */
+class SyntaxError : public std::runtime_error {
+public:
+  /**
+   * \brief Constructs a syntax error.
+   *
+   * \param[in] file_name Name of the source file (or a virtual name).
+   * \param[in] line 1-based line number.
+   * \param[in] column 1-based column number (bytes).
+   * \param[in] message Diagnostic text without location prefix.
+   */
+  SyntaxError(std::string file_name, unsigned int line, unsigned int column,
+              const std::string &message);
+
+  /** \brief Returns the source file name. */
+  [[nodiscard]] const std::string &file_name() const noexcept {
+    return file_name_;
+  }
+  /** \brief Returns the 1-based line number. */
+  [[nodiscard]] unsigned int line() const noexcept { return line_; }
+  /** \brief Returns the 1-based column number. */
+  [[nodiscard]] unsigned int column() const noexcept { return column_; }
+  /** \brief Returns the diagnostic text without location prefix. */
+  [[nodiscard]] const std::string &message() const noexcept {
+    return message_;
+  }
+
+private:
+  std::string file_name_;
+  unsigned int line_ = 0;
+  unsigned int column_ = 0;
+  std::string message_;
+};
+
+/**
+ * \brief Kinds of tokens produced by `tokenize`.
+ */
+enum class TokenKind {
+  /** \brief Unquoted sequence of non-blank, non-delimiter characters. */
+  Word,
+  /** \brief Double-quoted string; `text` holds the unescaped content. */
+  QuotedString,
+  /** \brief The `;` entry terminator. */
+  Semicolon,
+  /** \brief The `{` block opener. */
+  LeftBrace,
+  /** \brief The `}` block closer. */
+  RightBrace
+};
+
+/**
+ * \brief One lexical token with its source position.
+ */
+struct Token {
+  /** \brief Token category. */
+  TokenKind kind = TokenKind::Word;
+  /** \brief Token value (quotes removed and escapes resolved for strings). */
+  std::string text;
+  /** \brief Token exactly as written in the source (quotes included). */
+  std::string spelling;
+  /** \brief 1-based line of the first character. */
+  unsigned int line = 0;
+  /** \brief 1-based column (bytes) of the first character. */
+  unsigned int column = 0;
+};
+
+/**
+ * \brief Splits dictionary source text into tokens.
+ *
+ * Lexical rules:
+ * - blanks (space, tab, CR, LF, FF, VT) separate tokens;
+ * - `;`, `{` and `}` are single-character tokens and also end a word;
+ * - `//` starts a comment running to the end of the line only when it
+ *   appears at the start of a token (after a blank, a delimiter, a closing
+ *   quote, or at the beginning of the line). Inside a word, as in
+ *   `http://host` or `dir//file`, it is part of the word;
+ * - `"..."` is a quoted string that may contain blanks, `;`, `@`, `{`, `}`
+ *   and `//`. It must close on the same line. `\"` and `\\` are the only
+ *   escape sequences; any other backslash is kept literally.
+ *
+ * \param[in] source Full source text.
+ * \param[in] file_name File name used in diagnostics.
+ * \return Tokens in source order.
+ * \warning Throws `SyntaxError` for unterminated strings, a quote inside
+ * a word, or a character glued to a closing quote.
+ */
+[[nodiscard]] auto tokenize(std::string_view source, std::string_view file_name)
+    -> std::vector<Token>;
 } // namespace OpenSMOKEpp::Lexer
 
 #endif // OpenSMOKEpp_DictionaryLexer_H

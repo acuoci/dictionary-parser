@@ -38,6 +38,7 @@
 
 #include <iosfwd>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace OpenSMOKEpp {
@@ -85,6 +86,24 @@ enum DictionaryKeyWordTypes {
   /** \brief Raw option string preserving all tokens after the keyword. */
   SEQUENCE_STRING
 };
+
+/**
+ * \brief Returns the grammar-file token of a keyword type.
+ *
+ * \param[in] type Keyword type.
+ * \return Token such as `single_double`, or `unknown` for invalid values.
+ */
+[[nodiscard]] auto keyword_type_name(DictionaryKeyWordTypes type) noexcept
+    -> std::string_view;
+
+/**
+ * \brief Returns the `Dictionary` member function that reads a type.
+ *
+ * \param[in] type Keyword type.
+ * \return Function description such as `ReadDouble`, used in diagnostics.
+ */
+[[nodiscard]] auto keyword_type_reader(DictionaryKeyWordTypes type) noexcept
+    -> std::string_view;
 
 /**
  * \brief Defines one legal keyword in a dictionary grammar.
@@ -332,7 +351,7 @@ private:
    * \param[in] message Diagnostic message without keyword prefix.
    * \warning Always throws `std::runtime_error`.
    */
-  void ErrorMessage(const std::string message) const;
+  [[noreturn]] void ErrorMessage(const std::string message) const;
 };
 } // namespace OpenSMOKEpp
 

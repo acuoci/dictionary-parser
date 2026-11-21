@@ -41,6 +41,54 @@
 #include <stdexcept>
 
 namespace OpenSMOKEpp {
+namespace {
+struct TypeInfo {
+  DictionaryKeyWordTypes type;
+  std::string_view name;
+  std::string_view reader;
+};
+
+constexpr TypeInfo type_table[] = {
+    {NONE, "none", "(no reader)"},
+    {SINGLE_INT, "single_int", "ReadInt"},
+    {SINGLE_DOUBLE, "single_double", "ReadDouble"},
+    {SINGLE_STRING, "single_string", "ReadString"},
+    {SINGLE_CHAR, "single_char", "ReadChar"},
+    {SINGLE_BOOL, "single_bool", "ReadBool"},
+    {SINGLE_MEASURE, "single_measure", "ReadMeasure"},
+    {SINGLE_PATH, "single_path", "ReadPath"},
+    {SINGLE_DICTIONARY, "single_dictionary", "ReadDictionary"},
+    {VECTOR_INT, "vector_int", "ReadOption(std::vector<int>&)"},
+    {VECTOR_DOUBLE, "vector_double", "ReadOption(std::vector<double>&)"},
+    {VECTOR_STRING, "vector_string", "ReadOption(std::vector<std::string>&)"},
+    {VECTOR_CHAR, "vector_char", "ReadOption(std::vector<char>&)"},
+    {VECTOR_BOOL, "vector_bool", "ReadOption(BoolVector&)"},
+    {VECTOR_MEASURE, "vector_measure",
+     "ReadOption(std::vector<double>&, std::vector<std::string>&)"},
+    {VECTOR_STRING_DOUBLE, "vector_string_double",
+     "ReadOption(std::vector<std::string>&, std::vector<double>&)"},
+    {VECTOR_INT_STRING, "vector_int_string",
+     "ReadOption(std::vector<int>&, std::vector<std::string>&)"},
+    {SEQUENCE_STRING, "sequence_string", "ReadSequence"},
+};
+} // namespace
+
+auto keyword_type_name(const DictionaryKeyWordTypes type) noexcept
+    -> std::string_view {
+  for (const auto &info : type_table)
+    if (info.type == type)
+      return info.name;
+  return "unknown";
+}
+
+auto keyword_type_reader(const DictionaryKeyWordTypes type) noexcept
+    -> std::string_view {
+  for (const auto &info : type_table)
+    if (info.type == type)
+      return info.reader;
+  return "unknown";
+}
+
 void DictionaryKeyWord::ErrorMessage(const std::string message) const {
   throw std::runtime_error("Keyword " + name_ + ": " + message);
 }
@@ -77,44 +125,10 @@ DictionaryKeyWord::DictionaryKeyWord(const std::string &name,
 }
 
 void DictionaryKeyWord::SetTypeASCII() {
-  if (type_ == NONE)
-    type_ascii_ = "none";
-  else if (type_ == SINGLE_INT)
-    type_ascii_ = "single_int";
-  else if (type_ == SINGLE_DOUBLE)
-    type_ascii_ = "single_double";
-  else if (type_ == SINGLE_CHAR)
-    type_ascii_ = "single_char";
-  else if (type_ == SINGLE_STRING)
-    type_ascii_ = "single_string";
-  else if (type_ == SINGLE_BOOL)
-    type_ascii_ = "single_bool";
-  else if (type_ == SINGLE_MEASURE)
-    type_ascii_ = "single_measure";
-  else if (type_ == SINGLE_PATH)
-    type_ascii_ = "single_path";
-  else if (type_ == SINGLE_DICTIONARY)
-    type_ascii_ = "single_dictionary";
-  else if (type_ == VECTOR_INT)
-    type_ascii_ = "vector_int";
-  else if (type_ == VECTOR_DOUBLE)
-    type_ascii_ = "vector_double";
-  else if (type_ == VECTOR_CHAR)
-    type_ascii_ = "vector_char";
-  else if (type_ == VECTOR_STRING)
-    type_ascii_ = "vector_string";
-  else if (type_ == VECTOR_BOOL)
-    type_ascii_ = "vector_bool";
-  else if (type_ == VECTOR_MEASURE)
-    type_ascii_ = "vector_measure";
-  else if (type_ == VECTOR_STRING_DOUBLE)
-    type_ascii_ = "vector_string_double";
-  else if (type_ == VECTOR_INT_STRING)
-    type_ascii_ = "vector_int_string";
-  else if (type_ == SEQUENCE_STRING)
-    type_ascii_ = "sequence_string";
-  else
+  const std::string_view name = keyword_type_name(type_);
+  if (name == "unknown")
     ErrorMessage("The keyword type is not specified correctly.");
+  type_ascii_ = std::string(name);
 }
 
 void DictionaryKeyWord::SetKeyword(const std::string &line) {
@@ -130,46 +144,14 @@ void DictionaryKeyWord::SetType(const std::string &line) {
 
   if (tokens.size() != 2 || tokens[0] != "type:")
     ErrorMessage("The keyword type is not specified correctly.");
-  if (tokens[1] == "none")
-    type_ = NONE;
-  else if (tokens[1] == "single_int")
-    type_ = SINGLE_INT;
-  else if (tokens[1] == "single_double")
-    type_ = SINGLE_DOUBLE;
-  else if (tokens[1] == "single_string")
-    type_ = SINGLE_STRING;
-  else if (tokens[1] == "single_char")
-    type_ = SINGLE_CHAR;
-  else if (tokens[1] == "single_bool")
-    type_ = SINGLE_BOOL;
-  else if (tokens[1] == "single_measure")
-    type_ = SINGLE_MEASURE;
-  else if (tokens[1] == "single_path")
-    type_ = SINGLE_PATH;
-  else if (tokens[1] == "single_dictionary")
-    type_ = SINGLE_DICTIONARY;
-  else if (tokens[1] == "vector_int")
-    type_ = VECTOR_INT;
-  else if (tokens[1] == "vector_double")
-    type_ = VECTOR_DOUBLE;
-  else if (tokens[1] == "vector_string")
-    type_ = VECTOR_STRING;
-  else if (tokens[1] == "vector_char")
-    type_ = VECTOR_CHAR;
-  else if (tokens[1] == "vector_bool")
-    type_ = VECTOR_BOOL;
-  else if (tokens[1] == "vector_measure")
-    type_ = VECTOR_MEASURE;
-  else if (tokens[1] == "vector_string_double")
-    type_ = VECTOR_STRING_DOUBLE;
-  else if (tokens[1] == "vector_int_string")
-    type_ = VECTOR_INT_STRING;
-  else if (tokens[1] == "sequence_string")
-    type_ = SEQUENCE_STRING;
-  else
-    ErrorMessage("The keyword type is not specified correctly.");
-
-  type_ascii_ = std::string(tokens[1]);
+  for (const auto &info : type_table)
+    if (info.name == tokens[1]) {
+      type_ = info.type;
+      type_ascii_ = std::string(info.name);
+      return;
+    }
+  ErrorMessage("The keyword type is not specified correctly: unknown type '" +
+               std::string(tokens[1]) + "'.");
 }
 
 void DictionaryKeyWord::SetComment(const std::string &line) {

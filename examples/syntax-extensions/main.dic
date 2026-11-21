@@ -1,0 +1,43 @@
+//-----------------------------------------------------------------//
+// Example of the syntax extensions introduced in version 1.1:      //
+//   - #include of other dictionary files                          //
+//   - inline dictionaries (@Keyword { ... })                      //
+//   - quoted strings                                              //
+//   - '//' inside values (URLs)                                   //
+//   - braces on the same line as the dictionary name              //
+//-----------------------------------------------------------------//
+
+// Shared solver settings, resolved relative to this file
+#include "common/solver-parameters.dic"
+
+Dictionary CounterFlowFlame1D
+{
+	@Type                   CounterFlowDiffusion;
+	@KineticsPreProcessor   kinetics;
+
+	// Inline dictionaries: stored as "CounterFlowFlame1D/FuelStream", etc.
+	@FuelStream
+	{
+		@Moles          C2H4 1;
+		@Temperature    300 K;
+		@Pressure       1 atm;
+	}
+	@OxidizerStream     { @Moles O2 0.24 N2 0.76; @Temperature 300 K; @Pressure 1 atm; }
+
+	@FuelVelocity       19.5 cm/s;
+	@OxidizerVelocity   19.5 cm/s;
+
+	// References to dictionaries defined in an included file
+	@DaeParameters      dae-parameters;
+
+	// Quoted strings may contain blanks, ';', '@', '{', '}' and '//'
+	@Output             "Output files/counterflow C2H4";
+	@Title              "C2H4/air flame @ 1 atm; strain rate 80 1/s";
+	@Reference          http://www.opensmoke.polimi.it/;
+}
+
+Dictionary kinetics {
+	@Kinetics           "../kinetic mechanisms/POLIMI_C2H4.CKI";
+	@Thermodynamics     ../kinetic-mechanisms/POLIMI.CKT;
+	@Output             kinetics;
+}
