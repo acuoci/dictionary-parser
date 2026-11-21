@@ -577,6 +577,15 @@ later) or `dictionary.SetUnitSystem(units::si)`; `units::to_si`,
 `units::from_si`, `units::si_unit` and `units::describe` take the system as an
 optional last argument (default `units::si_kmol`).
 
+**Exact factors.** Conversion factors are kept exact, as an integer ratio
+times a power of ten (`g/cm3` is exactly 10³, `ms` exactly 10⁻³, `km/h`
+exactly 10/36), and the converted value is rounded only once. A value in
+`cm3` therefore gives the same `double` as `value / 1.e6`, in `min` the same
+as `value * 60.`, in `g/cm3` the same as `value * 1.e3`: reading the input
+through units reproduces the usual hand-written conversions bit for bit.
+`units::parse_unit` returns the rounded `factor` and its exact form
+(`numerator`, `denominator`, `exponent10`).
+
 ### Unit Syntax
 
 - Products: `.`, `*` or `·` (`Pa.s`, `kg*m`); each `/` divides by the next

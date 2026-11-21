@@ -57,6 +57,11 @@
  * value_SI = value * factor + offset
  * \endcode
  *
+ * The factor is kept exact (an integer ratio times a power of ten) and the
+ * product `value * factor` is rounded once, so conversions give the same
+ * numbers as the usual hand-written ones (`value / 1.e6` for `cm3`,
+ * `value * 60.` for `min`, `value * 1.e3` for `g/cm3`).
+ *
  * Amounts of substance are expressed in kilomoles by default (OpenSMOKE++
  * convention); see `UnitSystem`.
  *
@@ -302,8 +307,27 @@ public:
  * \brief Result of parsing a unit expression.
  */
 struct UnitConversion {
-  /** \brief Multiplicative factor to SI. */
+  /**
+   * \brief Multiplicative factor to SI, rounded to the nearest `double`
+   * (equal to `numerator / denominator * 10^exponent10`).
+   */
   double factor = 1.0;
+  /**
+   * \brief Exact form of the factor: `numerator / denominator *
+   * 10^exponent10`.
+   *
+   * Numerator and denominator are integers whenever the units are defined
+   * by exact decimal numbers (every unit except the angles), and powers of
+   * ten are kept in `exponent10`, so that `g/cm3` is exactly 1000 and `ms`
+   * exactly 1/1000. `to_si` and `from_si` apply this exact factor and round
+   * only the result: a value in `cm3` gives the same `double` as
+   * `value / 1.e6`, a value in `min` the same as `value * 60.`.
+   */
+  double numerator = 1.0;
+  /** \brief See `numerator`. */
+  double denominator = 1.0;
+  /** \brief See `numerator`. */
+  int exponent10 = 0;
   /**
    * \brief Additive offset to SI (K) when the expression is a stand-alone
    * affine temperature unit (`C`, `F`); zero otherwise.

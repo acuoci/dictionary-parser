@@ -55,92 +55,235 @@ auto Rational::to_string() const -> std::string {
 namespace {
 constexpr double pi = 3.14159265358979323846;
 
+// Exact scale factor `num / den * 10^e10`. `num` and `den` are integers
+// whenever the definition is an exact decimal number, and powers of ten are
+// kept apart in `e10`, so that products and quotients of metric units stay
+// exact (`g/cm3` is 10^3, `ms` is 10^-3). `e10` becomes fractional only
+// through fractional exponents (`s^0.5`).
+struct Scale {
+  double num = 1.0;
+  double den = 1.0;
+  Rational e10{0, 1};
+};
+
+// Largest double below which every integer is exactly representable.
+constexpr double exact_integer_limit = 9007199254740992.0; // 2^53
+
+[[nodiscard]] auto is_exact_integer(const double x) -> bool {
+  return x >= 1.0 && x < exact_integer_limit && x == std::trunc(x);
+}
+
+// Moves the trailing zeros of integer numerators and denominators into the
+// power of ten and cancels common integer factors.
+void normalize(Scale &s) {
+  if (is_exact_integer(s.num) && is_exact_integer(s.den)) {
+    const auto g = std::gcd(static_cast<long long>(s.num),
+                            static_cast<long long>(s.den));
+    if (g > 1) {
+      s.num /= static_cast<double>(g);
+      s.den /= static_cast<double>(g);
+    }
+  }
+  const auto pull_tens = [&s](double &x, const int sign) {
+    while (is_exact_integer(x) && x >= 10.0 && std::fmod(x, 10.0) == 0.0) {
+      x /= 10.0;
+      s.e10 = s.e10 + Rational{sign, 1};
+    }
+  };
+  pull_tens(s.num, 1);
+  pull_tens(s.den, -1);
+}
+
+[[nodiscard]] auto multiply(const Scale &a, const Scale &b) -> Scale {
+  Scale r{a.num * b.num, a.den * b.den, a.e10 + b.e10};
+  normalize(r);
+  return r;
+}
+
+[[nodiscard]] auto inverse(const Scale &a) -> Scale {
+  return Scale{a.den, a.num, Rational{0, 1} - a.e10};
+}
+
+[[nodiscard]] auto raise(const Scale &a, const Rational &p) -> Scale {
+  const Scale base = p.num < 0 ? inverse(a) : a;
+  const int n = p.num < 0 ? -p.num : p.num;
+  Scale r;
+  if (p.den == 1) {
+    // Integer power by repeated products: exact for integer factors.
+    for (int i = 0; i < n; ++i)
+      r = multiply(r, base);
+    return r;
+  }
+  const double q = static_cast<double>(n) / static_cast<double>(p.den);
+  r.num = std::pow(base.num, q);
+  r.den = std::pow(base.den, q);
+  r.e10 = base.e10 * Rational::make(n, p.den);
+  normalize(r);
+  return r;
+}
+
+// Exact powers of ten representable as double.
+constexpr double exact_powers_of_ten[] = {
+    1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+constexpr int max_exact_power_of_ten = 22;
+
+// Unevaluated sum hi + lo (double-double), used to round a product by an
+// exact factor only once.
+struct TwoDouble {
+  double hi;
+  double lo;
+};
+
+[[nodiscard]] auto fast_two_sum(const double a, const double b) -> TwoDouble {
+  const double s = a + b;
+  return {s, b - (s - a)};
+}
+
+[[nodiscard]] auto times(const TwoDouble &x, const double b) -> TwoDouble {
+  const double p = x.hi * b;
+  const double e = std::fma(x.hi, b, -p) + x.lo * b;
+  return fast_two_sum(p, e);
+}
+
+[[nodiscard]] auto over(const TwoDouble &x, const double b) -> TwoDouble {
+  const double q = x.hi / b;
+  const double r = std::fma(-q, b, x.hi) + x.lo;
+  return fast_two_sum(q, r / b);
+}
+
+// value * num / den * 10^e10, computed in double-double and rounded once.
+[[nodiscard]] auto apply_scale(const double value, const double num,
+                               const double den, const int e10) -> double {
+  if (value == 0.0 || !std::isfinite(value))
+    return value * (num / den) * std::pow(10.0, e10);
+  TwoDouble x{value, 0.0};
+  if (num != 1.0)
+    x = times(x, num);
+  for (int e = e10; e > 0; e -= max_exact_power_of_ten)
+    x = times(x, exact_powers_of_ten[std::min(e, max_exact_power_of_ten)]);
+  for (int e = -e10; e > 0; e -= max_exact_power_of_ten)
+    x = over(x, exact_powers_of_ten[std::min(e, max_exact_power_of_ten)]);
+  if (den != 1.0)
+    x = over(x, den);
+  return x.hi + x.lo;
+}
+
+// Fills the exact and rounded factors of a conversion; a fractional power of
+// ten is folded into the numerator.
+void set_factor(UnitConversion &conversion, Scale scale) {
+  const int whole = scale.e10.num >= 0 ? scale.e10.num / scale.e10.den
+                                       : -((-scale.e10.num + scale.e10.den - 1) /
+                                           scale.e10.den);
+  const Rational fraction = scale.e10 - Rational{whole, 1};
+  if (!fraction.is_zero())
+    scale.num *= std::pow(10.0, static_cast<double>(fraction.num) /
+                                    static_cast<double>(fraction.den));
+  conversion.numerator = scale.num;
+  conversion.denominator = scale.den;
+  conversion.exponent10 = whole;
+  conversion.factor = apply_scale(1.0, scale.num, scale.den, whole);
+}
+
 struct UnitDefinition {
   std::string_view symbol;
-  double factor;
+  Scale scale;
   Dimension dimension;
   bool prefixable;
   double offset = 0.0; // affine temperature scales only
 };
 
+// Helpers for the exact definitions below: value * 10^e, or num/den.
+[[nodiscard]] auto dec(const double value, const int e = 0) -> Scale {
+  return Scale{value, 1.0, Rational{e, 1}};
+}
+[[nodiscard]] auto ratio(const double num, const double den) -> Scale {
+  return Scale{num, den, Rational{0, 1}};
+}
+
 // Symbols are case-sensitive. Exact symbols take precedence over prefixed
 // readings (min = minute, Pa = pascal, cd = candela, h = hour).
+// Every factor is written exactly, as an integer (ratio) times a power of
+// ten, except the angles (multiples of pi).
 const std::vector<UnitDefinition> &registry() {
   static const std::vector<UnitDefinition> table = {
       // SI base units (g instead of kg, so that prefixes apply)
-      {"m", 1.0, dim::Length, true},
-      {"g", 1.0e-3, dim::Mass, true},
-      {"s", 1.0, dim::Time, true},
-      {"K", 1.0, dim::Temperature, true},
-      {"mol", 1.0, dim::Amount, true},
-      {"A", 1.0, dim::Current, true},
-      {"cd", 1.0, dim::LuminousIntensity, true},
+      {"m", dec(1), dim::Length, true},
+      {"g", dec(1, -3), dim::Mass, true},
+      {"s", dec(1), dim::Time, true},
+      {"K", dec(1), dim::Temperature, true},
+      {"mol", dec(1), dim::Amount, true},
+      {"A", dec(1), dim::Current, true},
+      {"cd", dec(1), dim::LuminousIntensity, true},
       // SI derived units
-      {"Hz", 1.0, dim::Frequency, true},
-      {"N", 1.0, dim::Force, true},
-      {"Pa", 1.0, dim::Pressure, true},
-      {"J", 1.0, dim::Energy, true},
-      {"W", 1.0, dim::Power, true},
-      {"Wh", 3600.0, dim::Energy, true},
-      {"L", 1.0e-3, dim::Volume, true},
-      {"l", 1.0e-3, dim::Volume, true},
-      {"bar", 1.0e5, dim::Pressure, true},
-      {"eV", 1.602176634e-19, dim::Energy, true},
-      {"cal", 4.184, dim::Energy, true}, // thermochemical calorie
+      {"Hz", dec(1), dim::Frequency, true},
+      {"N", dec(1), dim::Force, true},
+      {"Pa", dec(1), dim::Pressure, true},
+      {"J", dec(1), dim::Energy, true},
+      {"W", dec(1), dim::Power, true},
+      {"Wh", dec(3600), dim::Energy, true},
+      {"L", dec(1, -3), dim::Volume, true},
+      {"l", dec(1, -3), dim::Volume, true},
+      {"bar", dec(1, 5), dim::Pressure, true},
+      {"eV", dec(1602176634, -28), dim::Energy, true},
+      {"cal", dec(4184, -3), dim::Energy, true}, // thermochemical calorie
       // Time
-      {"min", 60.0, dim::Time, false},
-      {"h", 3600.0, dim::Time, false},
-      {"hr", 3600.0, dim::Time, false},
+      {"min", dec(60), dim::Time, false},
+      {"h", dec(3600), dim::Time, false},
+      {"hr", dec(3600), dim::Time, false},
       // Length
-      {"micron", 1.0e-6, dim::Length, false},
-      {"angstrom", 1.0e-10, dim::Length, false},
-      {"in", 0.0254, dim::Length, false},
-      {"ft", 0.3048, dim::Length, false},
+      {"micron", dec(1, -6), dim::Length, false},
+      {"angstrom", dec(1, -10), dim::Length, false},
+      {"in", dec(254, -4), dim::Length, false},
+      {"ft", dec(3048, -4), dim::Length, false},
       // Mass
-      {"lb", 0.45359237, dim::Mass, false},
-      {"oz", 0.028349523125, dim::Mass, false},
+      {"lb", dec(45359237, -8), dim::Mass, false},
+      {"oz", dec(28349523125, -12), dim::Mass, false},
       // Pressure
-      {"atm", 101325.0, dim::Pressure, false},
-      {"torr", 101325.0 / 760.0, dim::Pressure, false},
-      {"mmHg", 133.322387415, dim::Pressure, false},
-      {"psi", 6894.757293168361, dim::Pressure, false},
+      {"atm", dec(101325), dim::Pressure, false},
+      {"torr", ratio(101325, 760), dim::Pressure, false},
+      {"mmHg", dec(133322387415, -9), dim::Pressure, false},
+      // lbf / in^2 = 4.4482216152605 N / (0.0254 m)^2
+      {"psi", Scale{44482216152605, 64516, Rational{-5, 1}}, dim::Pressure,
+       false},
       // Energy and force (CGS and others)
-      {"erg", 1.0e-7, dim::Energy, false},
-      {"dyn", 1.0e-5, dim::Force, false},
-      {"BTU", 1055.05585262, dim::Energy, false},
+      {"erg", dec(1, -7), dim::Energy, false},
+      {"dyn", dec(1, -5), dim::Force, false},
+      {"BTU", dec(105505585262, -8), dim::Energy, false},
       // Temperature scales
-      {"C", 1.0, dim::Temperature, false, 273.15},
-      {"\xC2\xB0" "C", 1.0, dim::Temperature, false, 273.15},
-      {"degC", 1.0, dim::Temperature, false, 273.15},
-      {"F", 5.0 / 9.0, dim::Temperature, false, 459.67 * 5.0 / 9.0},
-      {"\xC2\xB0" "F", 5.0 / 9.0, dim::Temperature, false, 459.67 * 5.0 / 9.0},
-      {"degF", 5.0 / 9.0, dim::Temperature, false, 459.67 * 5.0 / 9.0},
-      {"R", 5.0 / 9.0, dim::Temperature, false},
+      {"C", dec(1), dim::Temperature, false, 273.15},
+      {"\xC2\xB0" "C", dec(1), dim::Temperature, false, 273.15},
+      {"degC", dec(1), dim::Temperature, false, 273.15},
+      {"F", ratio(5, 9), dim::Temperature, false, 459.67 * 5.0 / 9.0},
+      {"\xC2\xB0" "F", ratio(5, 9), dim::Temperature, false,
+       459.67 * 5.0 / 9.0},
+      {"degF", ratio(5, 9), dim::Temperature, false, 459.67 * 5.0 / 9.0},
+      {"R", ratio(5, 9), dim::Temperature, false},
       // Angles and rotation (radian is dimensionless)
-      {"rad", 1.0, dim::Dimensionless, false},
-      {"deg", pi / 180.0, dim::Dimensionless, false},
-      {"\xC2\xB0", pi / 180.0, dim::Dimensionless, false},
-      {"rpm", 2.0 * pi / 60.0, dim::Frequency, false},
+      {"rad", dec(1), dim::Dimensionless, false},
+      {"deg", ratio(pi, 180), dim::Dimensionless, false},
+      {"\xC2\xB0", ratio(pi, 180), dim::Dimensionless, false},
+      {"rpm", ratio(2.0 * pi, 60), dim::Frequency, false},
       // Dimensionless
-      {"dimensionless", 1.0, dim::Dimensionless, false},
-      {"#", 1.0, dim::Dimensionless, false},
-      {"%", 1.0e-2, dim::Dimensionless, false},
-      {"ppm", 1.0e-6, dim::Dimensionless, false},
+      {"dimensionless", dec(1), dim::Dimensionless, false},
+      {"#", dec(1), dim::Dimensionless, false},
+      {"%", dec(1, -2), dim::Dimensionless, false},
+      {"ppm", dec(1, -6), dim::Dimensionless, false},
   };
   return table;
 }
 
 struct Prefix {
   std::string_view symbol;
-  double factor;
+  int exponent10;
 };
 
 constexpr Prefix prefixes[] = {
-    {"da", 1e1},  {"Y", 1e24}, {"Z", 1e21}, {"E", 1e18},  {"P", 1e15},
-    {"T", 1e12},  {"G", 1e9},  {"M", 1e6},  {"k", 1e3},   {"h", 1e2},
-    {"d", 1e-1},  {"c", 1e-2}, {"m", 1e-3}, {"u", 1e-6},  {"\xC2\xB5", 1e-6},
-    {"\xCE\xBC", 1e-6}, {"n", 1e-9}, {"p", 1e-12}, {"f", 1e-15},
-    {"a", 1e-18}};
+    {"da", 1},  {"Y", 24}, {"Z", 21}, {"E", 18},  {"P", 15},
+    {"T", 12},  {"G", 9},  {"M", 6},  {"k", 3},   {"h", 2},
+    {"d", -1},  {"c", -2}, {"m", -3}, {"u", -6},  {"\xC2\xB5", -6},
+    {"\xCE\xBC", -6}, {"n", -9}, {"p", -12}, {"f", -15},
+    {"a", -18}};
 
 // Frequently used prefixed symbols, offered as spelling suggestions.
 constexpr std::string_view common_prefixed[] = {
@@ -148,7 +291,7 @@ constexpr std::string_view common_prefixed[] = {
     "kmol", "mmol", "kJ", "MJ", "kW", "kcal", "mbar", "kWh", "mL", "dm"};
 
 struct Term {
-  double factor = 1.0;
+  Scale scale{};
   Dimension dimension{};
   double offset = 0.0;  // offset of a single affine symbol
   int symbols = 0;      // number of unit symbols in the term
@@ -244,10 +387,10 @@ private:
         fail("missing unit after an operator");
       const Term next = factor();
       if (divide) {
-        result.factor /= next.factor;
+        result.scale = multiply(result.scale, inverse(next.scale));
         result.dimension = result.dimension / next.dimension;
       } else {
-        result.factor *= next.factor;
+        result.scale = multiply(result.scale, next.scale);
         result.dimension = result.dimension * next.dimension;
       }
       result.symbols += next.symbols;
@@ -260,8 +403,7 @@ private:
   auto factor() -> Term {
     Term term = primary();
     if (const auto power = exponent()) {
-      term.factor = std::pow(term.factor, static_cast<double>(power->num) /
-                                              static_cast<double>(power->den));
+      term.scale = raise(term.scale, *power);
       term.dimension = term.dimension.pow(*power);
       term.modified = true;
     }
@@ -287,7 +429,7 @@ private:
       if (peek() != ')')
         fail("missing ')' after sqrt(");
       ++pos_;
-      inner.factor = std::sqrt(inner.factor);
+      inner.scale = raise(inner.scale, Rational::make(1, 2));
       inner.dimension = inner.dimension.pow(Rational::make(1, 2));
       inner.modified = true;
       return inner;
@@ -321,7 +463,8 @@ private:
     if (!(value > 0.0) || !std::isfinite(value))
       fail("numeric factors must be positive");
     Term term;
-    term.factor = value;
+    term.scale = Scale{value, 1.0, Rational{0, 1}};
+    normalize(term.scale);
     term.modified = true;
     return term;
   }
@@ -336,7 +479,8 @@ private:
     term.symbols = 1;
     for (const auto &unit : registry())
       if (unit.symbol == name) {
-        term.factor = unit.factor;
+        term.scale = unit.scale;
+        normalize(term.scale);
         term.dimension = unit.dimension;
         term.offset = unit.offset;
         return term;
@@ -348,7 +492,8 @@ private:
       const std::string_view rest = name.substr(prefix.symbol.size());
       for (const auto &unit : registry())
         if (unit.symbol == rest && unit.prefixable) {
-          term.factor = prefix.factor * unit.factor;
+          term.scale = multiply(Scale{1.0, 1.0, Rational{prefix.exponent10, 1}},
+                                unit.scale);
           term.dimension = unit.dimension;
           term.modified = true;
           return term;
@@ -483,26 +628,8 @@ const std::vector<NamedDimension> &named_dimensions() {
          ") are not compatible with the expected " + describe(expected);
 }
 
-[[nodiscard]] auto parse_checked(std::string_view unit,
-                                 const Dimension &expected,
-                                 const UnitSystem &system) -> UnitConversion {
-  UnitConversion conversion = parse_unit(unit);
-  if (!(conversion.dimension == expected))
-    throw UnitError(mismatch_message(unit, conversion.dimension, expected));
-  if (!expected.is_temperature() || expected.temperature_difference)
-    conversion.offset = 0.0;
-  if (system.amount == AmountBase::Kilomole) {
-    const Rational e =
-        expected.exponents[static_cast<std::size_t>(Base::Amount)];
-    if (!e.is_zero())
-      conversion.factor /= std::pow(1000.0, static_cast<double>(e.num) /
-                                                static_cast<double>(e.den));
-  }
-  return conversion;
-}
-} // namespace
-
-auto parse_unit(std::string_view text) -> UnitConversion {
+// Parses a unit expression into its exact scale, dimension and offset.
+[[nodiscard]] auto parse_term(std::string_view text) -> Term {
   // Trim blanks.
   while (!text.empty() && (text.front() == ' ' || text.front() == '\t'))
     text.remove_prefix(1);
@@ -510,28 +637,58 @@ auto parse_unit(std::string_view text) -> UnitConversion {
     text.remove_suffix(1);
 
   if (text == "-")
-    return UnitConversion{1.0, 0.0, dim::Dimensionless};
+    return Term{};
 
   Parser parser(text);
-  const Term term = parser.parse();
-  UnitConversion result;
-  result.factor = term.factor;
-  result.dimension = term.dimension;
+  Term term = parser.parse();
   // The offset survives only for a stand-alone affine symbol (e.g. "C").
-  result.offset = (term.symbols == 1 && !term.modified) ? term.offset : 0.0;
-  return result;
+  if (term.symbols != 1 || term.modified)
+    term.offset = 0.0;
+  return term;
+}
+
+[[nodiscard]] auto to_conversion(const Term &term) -> UnitConversion {
+  UnitConversion conversion;
+  set_factor(conversion, term.scale);
+  conversion.offset = term.offset;
+  conversion.dimension = term.dimension;
+  return conversion;
+}
+
+[[nodiscard]] auto parse_checked(std::string_view unit,
+                                 const Dimension &expected,
+                                 const UnitSystem &system) -> UnitConversion {
+  Term term = parse_term(unit);
+  if (!(term.dimension == expected))
+    throw UnitError(mismatch_message(unit, term.dimension, expected));
+  if (!expected.is_temperature() || expected.temperature_difference)
+    term.offset = 0.0;
+  if (system.amount == AmountBase::Kilomole) {
+    // 1 kmol = 10^3 mol: divide by 10^(3e) exactly.
+    const Rational e =
+        expected.exponents[static_cast<std::size_t>(Base::Amount)];
+    term.scale.e10 = term.scale.e10 - Rational{3, 1} * e;
+  }
+  return to_conversion(term);
+}
+} // namespace
+
+auto parse_unit(std::string_view text) -> UnitConversion {
+  return to_conversion(parse_term(text));
 }
 
 auto to_si(const double value, std::string_view unit, const Dimension &expected,
            const UnitSystem &system) -> double {
-  const UnitConversion conversion = parse_checked(unit, expected, system);
-  return value * conversion.factor + conversion.offset;
+  const UnitConversion c = parse_checked(unit, expected, system);
+  return apply_scale(value, c.numerator, c.denominator, c.exponent10) +
+         c.offset;
 }
 
 auto from_si(const double value_si, std::string_view unit,
              const Dimension &expected, const UnitSystem &system) -> double {
-  const UnitConversion conversion = parse_checked(unit, expected, system);
-  return (value_si - conversion.offset) / conversion.factor;
+  const UnitConversion c = parse_checked(unit, expected, system);
+  return apply_scale(value_si - c.offset, c.denominator, c.numerator,
+                     -c.exponent10);
 }
 
 auto check_unit(std::string_view unit, const Dimension &expected)

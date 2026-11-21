@@ -484,3 +484,56 @@ TEST_CASE("units", "conversion factors follow their exact definitions") {
     CHECK(close(from_si(to_si(321.5, unit, dim::Temperature), unit,
                         dim::Temperature), 321.5));
 }
+
+TEST_CASE("units", "exact factors: one rounding, as hand-written conversions") {
+  // Exact representation of the factor.
+  const UnitConversion gcm3 = parse_unit("g/cm3");
+  CHECK(gcm3.numerator == 1.0 && gcm3.denominator == 1.0 &&
+        gcm3.exponent10 == 3);
+  CHECK(gcm3.factor == 1000.0);
+  CHECK(parse_unit("ms").exponent10 == -3);
+  CHECK(parse_unit("kcal").factor == 4184.0);
+  const UnitConversion kmh = parse_unit("km/h"); // 10^3 / 3600
+  CHECK(kmh.numerator == 1.0 && kmh.denominator == 36.0 &&
+        kmh.exponent10 == 1);
+  const UnitConversion torr = parse_unit("torr"); // 101325 / 760
+  CHECK(torr.numerator == 20265.0 && torr.denominator == 152.0 &&
+        torr.exponent10 == 0);
+
+  // Values are rounded once: the same doubles as value * 10^n or value / 10^n
+  // written with exact powers of ten, for every value.
+  const double values[] = {0.7, 7.1, 0.021, 0.019, 0.009, 1.1, 2.3e-5,
+                           300.15, 1.0 / 3.0, 9.87654321e7};
+  for (const double v : values) {
+    CHECK(to_si(v, "g/cm3", dim::Density) == v * 1e3);
+    CHECK(to_si(v, "cm3", dim::Volume) == v / 1e6);
+    CHECK(to_si(v, "mm3", dim::Volume) == v / 1e9);
+    CHECK(to_si(v, "cm", dim::Length) == v / 100.0);
+    CHECK(to_si(v, "ms", dim::Time) == v / 1000.0);
+    CHECK(to_si(v, "min", dim::Time) == v * 60.0);
+    CHECK(to_si(v, "h", dim::Time) == v * 3600.0);
+    CHECK(to_si(v, "kg/m2/min", dim::MassFlux) == v / 60.0);
+    CHECK(to_si(v, "bar", dim::Pressure) == v * 1e5);
+    CHECK(to_si(v, "atm", dim::Pressure) == v * 101325.0);
+    CHECK(to_si(v, "C", dim::Temperature) == v + 273.15);
+    CHECK(to_si(v, "mol/cm3", dim::Concentration, si_kmol) == v * 1e3);
+    CHECK(to_si(v, "mol/s", dim::MolarFlowRate, si_kmol) == v / 1e3);
+    CHECK(to_si(v, "kcal/mol", dim::MolarEnergy, si_kmol) == v * 4.184e6);
+    CHECK(to_si(v, "cal/mol", dim::MolarEnergy, si_kmol) == v * 4184.0);
+    CHECK(from_si(v, "cm3", dim::Volume) == v * 1e6);
+    CHECK(from_si(v, "ms", dim::Time) == v * 1000.0);
+  }
+  CHECK(to_si(0.7, "g/cm3", dim::Density) == 700.0);
+  CHECK(to_si(7.1, "cm3", dim::Volume) == 7.1 / 1e6);
+
+  // Special values pass through.
+  CHECK(to_si(0.0, "cm3", dim::Volume) == 0.0);
+  CHECK(std::isinf(to_si(HUGE_VAL, "cm3", dim::Volume)));
+  CHECK(std::isnan(to_si(std::nan(""), "cm3", dim::Volume)));
+
+  // Fractional powers stay correct.
+  CHECK(close(parse_unit("sqrt(cm)").factor, 0.1));
+  CHECK(close(parse_unit("cm^1.5").factor, 1e-3));
+  CHECK(close(to_si(1.0, "mm^(1/3)", dim::Length.pow(Rational::make(1, 3))),
+              0.1));
+}
