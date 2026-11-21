@@ -1165,7 +1165,9 @@ template <class G> [[nodiscard]] constexpr auto check() -> Problem {
             conflict[ids[a]][ids[b]] = conflict[ids[b]][ids[a]] = true;
       break;
     case Rule::Kind::AtLeast:
-    case Rule::Kind::RequiresAny: break;
+    case Rule::Kind::RequiresAny:
+    default: // no pairwise constraint (default: clean under -Wswitch-default)
+      break;
     }
   }
   for (std::size_t e = 0; e < edge_count; ++e)
