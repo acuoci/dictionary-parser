@@ -168,6 +168,14 @@ enum class DiagnosticCode {
   Deprecated,
   /** \brief A keyword is written in the file but never read. */
   UnusedKeyword,
+  /** \brief A referenced dictionary is not defined. */
+  UnknownDictionary,
+  /** \brief A dictionary is used with two different typed grammars. */
+  GrammarMismatch,
+  /** \brief References between dictionaries form a cycle. */
+  ReferenceCycle,
+  /** \brief A dictionary is not reached from the validated root. */
+  UnreferencedDictionary,
   /** \brief Any other problem. */
   Other
 };

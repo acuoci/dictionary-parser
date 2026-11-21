@@ -15,6 +15,7 @@ OpenSMOKE++ Dictionary Parser provides a compact parser for `Dictionary ... { ..
 | Syntax | Inline dictionaries, `#include`, quoted strings, flexible brace placement |
 | Units | Dimensions declared in the grammar; units in the input checked and converted to SI automatically |
 | Option formats | Records, lists, tables with units, enumerations with aliases, choices; `Read<T>` into C++ types |
+| Typed front end | Keys declared once as `constexpr` objects; reading an undeclared key or into the wrong type does not compile; grammar coherence checked at compile time; typed references between dictionaries |
 | Validation | Grammar rules (counting, requirements, conflicts, conditional rules), defaults, allowed values, ranges, sizes and sums; every value checked at load time; coherence analysis of the grammar itself |
 | Error handling | `DictionaryError` with structured diagnostics; all problems reported together, compiler-style messages with source excerpts, "did you mean" suggestions; nothing printed by the library |
 | Tests | Unit tests, integration tests over `examples/`, optional corpus test |
@@ -388,6 +389,121 @@ Supported types: `bool`, integers (range-checked), floating-point types,
 supported types. A value that does not fit the requested type is an error
 with code `wrong-type`.
 
+## Typed Grammars (Compile-Time Checks)
+
+`DictionaryTyped.h` lets you declare each keyword once, as a `constexpr` key
+whose type carries the keyword name and the C++ type of its value. A typed
+grammar lists its keys and rules, and a *view* of a dictionary reads keys with
+the type deduced from their declaration:
+
+```cpp
+#include "DictionaryTyped.h"
+
+namespace gas {
+using namespace OpenSMOKEpp::typed;
+namespace dim = OpenSMOKEpp::units::dim;
+
+inline constexpr auto T   = Key<"@Temperature">(Quantity(dim::Temperature).Minimum(0, false), "Temperature");
+inline constexpr auto P   = Key<"@Pressure">(Quantity(dim::Pressure), "Pressure");
+inline constexpr auto Rho = Key<"@Density">(Quantity(dim::Density), "Density");
+inline constexpr auto X   = Key<"@MoleFractions">(Composition().Sum(1.0), "Mole fractions");
+inline constexpr auto Y   = Key<"@MassFractions">(Composition().Sum(1.0), "Mass fractions");
+
+struct Status : Grammar<Status> {
+  static constexpr std::string_view display_name = "gas status";   // optional
+  static constexpr auto keys        = Keys(T, P, Rho, X, Y);
+  static constexpr auto constraints = Rules(Exactly(2, T, P, Rho), ExactlyOneOf(X, Y));
+};
+} // namespace gas
+
+namespace reactor {
+using namespace OpenSMOKEpp::typed;
+namespace dim = OpenSMOKEpp::units::dim;
+enum class Solver { OpenSMOKE, CVODE, DASPK };
+inline constexpr auto EndTime = Key<"@EndTime">(Quantity(dim::Time), "End time").Compulsory();
+inline constexpr auto Ode     = Key<"@OdeSolver">(Enumeration<Solver>("OpenSMOKE++", "CVODE", "DASPK")
+                                                      .Alias("Cvode", "CVODE")
+                                                      .Disable("DASPK", "not available in this build"),
+                                                  "ODE solver").Default("OpenSMOKE++");
+inline constexpr auto Initial = Key<"@InitialStatus">(Reference<gas::Status>(), "Initial status").Compulsory();
+struct Batch : Grammar<Batch> {
+  static constexpr auto keys = Keys(EndTime, Ode, Initial);
+};
+} // namespace reactor
+
+auto batch   = manager.view<reactor::Batch>("batch");     // validated once
+double t_end = batch.get(reactor::EndTime);                // SI seconds
+auto solver  = batch.get(reactor::Ode);                    // reactor::Solver
+auto mix     = batch.get(reactor::Initial);                // View<gas::Status>, validated
+double T     = mix.get(gas::T);                            // SI kelvin
+auto P       = mix.get_or(gas::P, 101325.0);
+```
+
+**Rejected at compile time:**
+
+| Mistake | Message |
+| --- | --- |
+| `mix.get(reactor::EndTime)`: the key is not in the grammar | `View::get: the key is not declared in this grammar` |
+| a key with a grammar keyword's name but another value type | `... declares this keyword with a different value type` |
+| `float t; batch.read(reactor::EndTime, t);` | `View::read: the variable does not have the type declared by the key` |
+| `Key<"Temperature">(...)` | `a keyword name starts with '@' ...` |
+| an incoherent grammar | `typed grammar: ...` with the keys in the template arguments, e.g. `Report<Issue::dead_keyword, "@Temperature", "@Pressure">` |
+
+The compile-time coherence analysis covers duplicate keys, compulsory keys
+with defaults, rules on undeclared keys, keys listed twice, invalid counts,
+conditions on undeclared or multi-token keys, condition values a key can never
+have (including disabled enumeration values), keys that require keys they
+conflict with, conflicting compulsory keys, unusable ("dead") keys and
+unsatisfiable rules. It is the same analysis as `DictionaryGrammar::Check`,
+restricted to what is known at compile time. `typed::check<G>()` returns
+the first problem found, so it can also be tested with `static_assert`.
+
+**Value specs and C++ types:**
+
+| Spec | C++ type |
+| --- | --- |
+| `Integer()`, `Real()`, `Boolean()` | `int`, `double`, `bool` (bounds with `Minimum`/`Maximum`) |
+| `Word()`, `Text()`, `Path()` | `std::string`, `std::string`, `std::filesystem::path` |
+| `Quantity(dim)`, `QuantityList(dim)` | `double`, `std::vector<double>` (SI) |
+| `Composition()` | `std::vector<std::pair<std::string, double>>` (`Sum`, `Size`, bounds) |
+| `Enumeration<E>(names...)` | `E` (by position), or `std::string`; `Alias`, `Disable` |
+| `List(spec)` | `std::vector<spec type>` (`Size`) |
+| `Record(Field("name", spec)...)` | `std::tuple<field types...>` |
+| `Table(Column("t", dim::Time), Column("x"))` | `std::vector<std::array<double, N>>` (SI) |
+| `Choice(spec...)` | `std::variant<spec types...>` |
+| `Reference<G>()`, `ReferenceList<G>()` | `View<G>`, `std::vector<View<G>>` |
+
+Keys are refined with `Compulsory()`, `Default("text as in a file")` and
+`Deprecated("advice")`. Rules use the same names as `OpenSMOKEpp::rules`, with
+keys instead of strings: `Required`, `Forbidden`, `Exactly`, `AtLeast`,
+`AtMost`, `ExactlyOneOf`, `AtLeastOneOf`, `AtMostOneOf`, `Requires`,
+`RequiresAnyOf`, `Conflicts`, and `When(Present|Absent|Equals|OneOf(...), rule)`.
+
+**Views.** `get(key)` returns the value (or the default); `get_if(key)`
+returns `std::nullopt` when the key is absent and has no default;
+`get_or(key, fallback)` returns a fallback instead; `has(key)` tells whether
+the key is written in the file; `read(key, out)` requires `out` to have the
+exact type of the key. `dictionary()` gives access to the underlying
+`Dictionary` (warnings, locations, legacy reads).
+
+**References and the manager.** `manager.view<G>(name)` attaches `G` to a
+dictionary once. Later views with the same grammar do not validate again;
+a view with a different typed grammar is an error (`grammar-mismatch`).
+`manager.validate<Root>(name)` walks every typed reference from the root,
+validates each dictionary with its grammar and collects all the errors in one
+`DictionaryError`: invalid dictionaries, references to undefined dictionaries
+(`unknown-dictionary`, located at the reference, with a suggestion) and cycles
+(`reference-cycle`). It returns the warnings, including dictionaries not
+reached from the root (`unreferenced-dictionary`).
+
+`typed::attach<G>(dictionary)` creates a view without a manager (references
+cannot be followed), and `typed::runtime_grammar<G>()` returns the equivalent
+`DictionaryGrammar`, for example for `Describe()`.
+
+A typed grammar is translated into an ordinary `DictionaryGrammar`, so
+everything checked at run time for other grammars (values, units, rules,
+`@Help`, unused keywords) applies unchanged.
+
 ## Units of Measure
 
 Measure keywords can declare their physical dimension in the grammar. The
@@ -543,10 +659,14 @@ ctest --output-on-failure
 
 - `Unit_*`: lexer, syntax, `#include`, typed reads, grammar coherence,
   dictionary validation, units, measures, diagnostics, rules, keyword
-  semantics, formats and typed reads (`unit_tests [suite...]` runs selected
-  suites).
+  semantics, formats, typed reads and typed grammars (`unit_tests [suite...]`
+  runs selected suites).
 - `Test_Example_*`: parse the input files in `examples/`, including a
   grammar-aware test for `input3.dic`.
+- `CompileFail_*`: one per file in `tests/compile_fail/`. Each file is
+  compiled twice: as it is (it must compile; part of the normal build) and
+  with `DICTIONARY_PARSER_SHOULD_FAIL` defined, which must fail with the error
+  given on its `// expected-error:` line (`ctest -L compile-fail`).
 - `Test_Corpus`: parses every `*.dic` file below `DICTIONARY_PARSER_CORPUS_DIR`
   (enabled only when the directory exists). `test_corpus <dir> --dump` prints
   the parsed content, which is useful to compare two parser versions.
@@ -579,6 +699,7 @@ Then include public headers:
 | `DictionaryGrammar.h` | Base class for user-defined grammar rules and coherence checks |
 | `DictionaryKeyWord.h` | Keyword metadata, value types, dimensions, defaults and constraints |
 | `DictionaryRules.h` | Structural rules and conditions (`rules::Exactly`, `rules::When`, ...) |
+| `DictionaryTyped.h` | Typed keys, typed grammars checked at compile time, views and typed references |
 | `DictionaryFormats.h` | Value formats (`formats::Record`, `List`, `Table`, `Choice`, ...) and the `Value` tree |
 | `DictionaryUnits.h` | Dimensions, unit parsing and conversion to SI |
 | `DictionaryInputFile.h` | Preprocessed input-file representation |

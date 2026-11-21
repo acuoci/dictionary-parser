@@ -907,10 +907,12 @@ auto format_of(const DictionaryKeyWord &keyword) -> ValueFormat {
   case SINGLE_PATH:
   case SEQUENCE_STRING:
     return Text();
-  case SINGLE_MEASURE:
-    return keyword.dimension()
-               ? Quantity(*keyword.dimension())
-               : Record({{"value", Real()}, {"units", Word()}});
+  case SINGLE_MEASURE: {
+    if (keyword.dimension())
+      return Quantity(*keyword.dimension());
+    std::vector<ValueFormat::Field> fields{{"value", Real()}, {"units", Word()}};
+    return Record(std::move(fields));
+  }
   case VECTOR_INT: return List(Integer());
   case VECTOR_DOUBLE: return List(Real());
   case VECTOR_STRING:

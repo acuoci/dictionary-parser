@@ -12,6 +12,39 @@ Scope of the study:
 
 ## 0. Progress log
 
+### Phase 6 (typed compile-time front end): done (branch `feature/phase6`, 2026-11-21)
+
+Delivered (`include/DictionaryTyped.h`, header only, plus small hooks in `DictionaryManager`):
+- **Typed keys.** `Key<"@Name">(spec, "description")`, refined with `Compulsory()`, `Default()` and `Deprecated()`. The keyword name is a template argument (`fixed_string`) and is checked when the key is declared.
+  - Value specs: `Integer`, `Real`, `Boolean`, `Word`, `Text`, `Path`, `Quantity(dim)`, `QuantityList(dim)`, `Composition`, `Enumeration<E>` (with `Alias`/`Disable`), `List`, `Record`/`Field`, `Table`/`Column`, `Choice`, `Reference<G>`, `ReferenceList<G>`.
+  - Each spec gives the C++ type of the value and translates to the existing keyword types and formats, so values, units, defaults and rules are validated by the existing runtime code.
+- **Typed grammars.** `struct G : Grammar<G> { static constexpr auto keys = Keys(...); static constexpr auto constraints = Rules(...); }`.
+  - Typed rules mirror `OpenSMOKEpp::rules` and take keys instead of strings.
+  - A constexpr coherence analysis (`typed::check<G>()`) runs whenever a grammar is constructed or viewed. It mirrors `DictionaryGrammar::Check` for everything known at compile time: duplicates, compulsory with default, rules on undeclared keys, keys listed twice, counts, conditions on undeclared or multi-token keys, impossible condition values (enumerations, disabled values, booleans, integers), requires-and-conflicts, conflicting compulsory keys, dead keys and unsatisfiable rules.
+  - Problems become compiler errors with the keys printed in the template arguments: `Report<Issue::dead_keyword, "@Temperature", "@Pressure">`.
+- **Views.** `View<G>::get/get_if/get_or/has/read`. The value type is deduced from the key. A key that the grammar does not declare (or declares with another type) does not compile. `read(key, out)` requires the exact type.
+- **References and the manager:**
+  - `manager.view<G>(name)` attaches once per grammar; a second, different typed grammar is a `grammar-mismatch` error.
+  - Reading a `Reference<G>` key returns a validated `View<G>`.
+  - `manager.validate<Root>(name)` walks the reference graph and collects every error. It reports invalid dictionaries, `unknown-dictionary` (located at the reference, with a suggestion) and `reference-cycle`, and returns warnings, including `unreferenced-dictionary`.
+  - `DictionaryManager::operator()` now reports a missing dictionary with the code `unknown-dictionary` (same message as before).
+- **Compile-fail tests:** 10 files in `tests/compile_fail/`.
+  - Each is built once as a normal target (it must compile), and once with `DICTIONARY_PARSER_SHOULD_FAIL` from a CTest test that must fail with the regex on its `// expected-error:` line.
+  - Cases: undeclared key, different value type, wrong variable type, invalid name, duplicate key, rule on an undeclared key, requires-and-conflicts, dead key, impossible condition value, untyped grammar.
+- **Fixes found while testing with GCC 16.2:**
+  - `std::array<Rational, 7> exponents{}` as a default member initializer is miscompiled: from the third element on, exponents have a zero denominator, so `1/s` parsed as dimensionless. The zero exponents are now built explicitly.
+  - Two new warnings (`-Wsign-conversion`, and a false-positive `-Wdangling-pointer`) in Phase 3/4 code were removed.
+
+Verification:
+- 13 new runtime test cases (`frontend` suite, 119 in total) and about 40 compile-time `static_assert`s on the coherence analysis.
+- 29/29 CTest targets pass with Apple Clang (`-Werror`), Apple Clang + ASan/UBSan, and GCC 16.2 (`-Werror`). The 10 compile-fail tests pass with both compilers.
+- GCC 11 could not be tested locally: the Homebrew GCC 11 is incompatible with the installed macOS SDK. CI covers it.
+- The parser is unchanged in this phase. The corpus test passes.
+
+Not covered:
+- Typed grammars are C++ only; grammar files stay runtime grammars.
+- Implicit naming conventions (`"Surface-" + phase`) are handled by calling `manager.view<G>(computed_name)`; no special support was added.
+
 ### Phase 4 (option formats and typed reads): done (branch `feature/phase4`, 2026-11-21)
 
 Delivered:

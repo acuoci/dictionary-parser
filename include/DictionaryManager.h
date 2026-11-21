@@ -37,6 +37,7 @@
 #define OpenSMOKEpp_DictionaryManager_H
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -46,6 +47,10 @@
 #include "Dictionary.h"
 
 namespace OpenSMOKEpp {
+namespace typed {
+template <class G> class View;
+} // namespace typed
+
 /**
  * \brief Owns all dictionaries parsed from one or more input files.
  *
@@ -139,6 +144,68 @@ public:
    */
   [[nodiscard]] std::vector<std::string> names() const;
 
+  /**
+   * \brief Attaches the typed grammar `G` to a dictionary (once) and returns
+   * a typed view of it (requires `DictionaryTyped.h`).
+   *
+   * The first call validates the dictionary; later calls with the same
+   * grammar return a view without validating again. A dictionary cannot be
+   * viewed with two different typed grammars.
+   *
+   * \param[in] name Dictionary name.
+   * \param[in] from Location of the reference to this dictionary, if any
+   * (used in messages).
+   * \warning Throws `DictionaryError` if the dictionary is not defined, is
+   * already attached to another typed grammar, or is not valid.
+   */
+  template <class G>
+  [[nodiscard]] auto view(std::string_view name, const SourceLocation &from = {})
+      -> typed::View<G>;
+
+  /**
+   * \brief Validates a dictionary and, recursively, every dictionary it
+   * references through typed references (requires `DictionaryTyped.h`).
+   *
+   * All problems are collected: invalid dictionaries, references to
+   * undefined dictionaries, cycles, and dictionaries viewed with two
+   * different grammars.
+   *
+   * \param[in] root Name of the root dictionary, validated with `G`.
+   * \return Warnings: dictionaries not reached from `root` (code
+   * `UnreferencedDictionary`) and the warnings of the dictionaries.
+   * \warning Throws `DictionaryError` with every error found (warnings
+   * included as errors if warnings are treated as errors).
+   */
+  template <class G>
+  auto validate(std::string_view root) -> std::vector<Diagnostic>;
+
+  /**
+   * \brief Low-level support of `view`: attaches a grammar to a dictionary
+   * once per grammar identity.
+   *
+   * \param[in] name Dictionary name.
+   * \param[in] grammar_id Identity of the typed grammar.
+   * \param[in] grammar_name Name of the grammar used in messages.
+   * \param[in] attach Attaches the grammar (called on the first use only).
+   * \param[in] from Location of the reference, if any.
+   * \return The dictionary.
+   */
+  Dictionary &AttachGrammar(std::string_view name, const void *grammar_id,
+                            const std::string &grammar_name,
+                            const std::function<void(Dictionary &)> &attach,
+                            const SourceLocation &from = {});
+
+  /**
+   * \brief Low-level support of `validate`: turns the collected diagnostics
+   * into an exception or a list of warnings.
+   *
+   * \param[in] diagnostics Diagnostics collected while walking.
+   * \param[in] visited Dictionaries reached from the root.
+   */
+  auto FinishValidation(std::vector<Diagnostic> diagnostics,
+                        const std::vector<std::string> &visited) const
+      -> std::vector<Diagnostic>;
+
 private:
   /** \brief Dictionaries indexed by their declared names. */
   std::map<std::string, Dictionary, std::less<>> map_of_dictionaries_;
@@ -151,6 +218,14 @@ private:
 
   /** \brief Where each dictionary was defined. */
   std::map<std::string, SourceLocation, std::less<>> origins_;
+
+  /** \brief Typed grammar attached to a dictionary by `view`. */
+  struct Attached {
+    const void *id = nullptr;
+    std::string grammar;
+  };
+  /** \brief Typed grammars attached, by dictionary name. */
+  std::map<std::string, Attached, std::less<>> attached_;
 
   /**
    * \brief Parses one source buffer and, recursively, its includes.

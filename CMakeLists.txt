@@ -106,11 +106,46 @@ if (DICTIONARY_PARSER_BUILD_TESTS)
 		tests/test_diagnostics.cpp
 		tests/test_rules.cpp
 		tests/test_formats.cpp
+		tests/test_frontend.cpp
 	)
 	target_compile_definitions(unit_tests PRIVATE
 		DICTIONARY_PARSER_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
-	foreach(suite lexer syntax include reads grammar validation units measures diagnostics rules semantics formats typed)
+	foreach(suite lexer syntax include reads grammar validation units measures diagnostics rules semantics formats typed frontend)
 		add_test(NAME Unit_${suite} COMMAND unit_tests ${suite})
+	endforeach()
+
+	# Compile-fail tests of the typed front end. Each file in
+	# tests/compile_fail states the expected error on a line
+	# "// expected-error: <regex>". The file must compile as it is (control
+	# target, part of the normal build) and must fail to compile, with that
+	# error, when DICTIONARY_PARSER_SHOULD_FAIL is defined (CTest target).
+	file(GLOB _compile_fail_sources CONFIGURE_DEPENDS
+		"${CMAKE_CURRENT_SOURCE_DIR}/tests/compile_fail/*.cpp")
+	foreach(source IN LISTS _compile_fail_sources)
+		get_filename_component(case_name "${source}" NAME_WE)
+		file(STRINGS "${source}" expected REGEX "^// expected-error: " LIMIT_COUNT 1)
+		string(REGEX REPLACE "^// expected-error: " "" expected "${expected}")
+		if (expected STREQUAL "")
+			message(FATAL_ERROR "${source}: missing '// expected-error: <regex>' line")
+		endif()
+		foreach(variant ok fail)
+			set(target compile_${variant}_${case_name})
+			add_library(${target} OBJECT "${source}")
+			target_link_libraries(${target} PRIVATE
+				DictionaryParser::dictionary_parser dictionary_parser_build_flags)
+			target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+			set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+		endforeach()
+		target_compile_definitions(compile_fail_${case_name} PRIVATE DICTIONARY_PARSER_SHOULD_FAIL)
+		set_target_properties(compile_fail_${case_name} PROPERTIES
+			EXCLUDE_FROM_ALL TRUE EXCLUDE_FROM_DEFAULT_BUILD TRUE)
+		add_test(NAME CompileFail_${case_name}
+			COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}"
+				--target compile_fail_${case_name} --config $<CONFIG>)
+		set_tests_properties(CompileFail_${case_name} PROPERTIES
+			PASS_REGULAR_EXPRESSION "${expected}"
+			RESOURCE_LOCK compile_fail
+			LABELS compile-fail)
 	endforeach()
 
 	# Integration tests over the example input files.

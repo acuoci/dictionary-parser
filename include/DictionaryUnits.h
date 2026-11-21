@@ -130,8 +130,23 @@ inline constexpr std::size_t number_of_bases = 7;
  * by comparisons and dropped by arithmetic.
  */
 struct Dimension {
+  /**
+   * \brief All-zero exponents, assigned one by one.
+   *
+   * `std::array<Rational, 7> exponents{}` as a default member initializer is
+   * miscompiled by GCC 16.2 (the elements after the second are left with a
+   * zero denominator), so the zero exponents are built explicitly.
+   */
+  [[nodiscard]] static constexpr auto zero_exponents()
+      -> std::array<Rational, number_of_bases> {
+    std::array<Rational, number_of_bases> zero{};
+    for (auto &e : zero)
+      e = Rational{0, 1};
+    return zero;
+  }
+
   /** \brief Exponents indexed by `Base`. */
-  std::array<Rational, number_of_bases> exponents{};
+  std::array<Rational, number_of_bases> exponents = zero_exponents();
   /** \brief Interval semantics for a pure temperature. */
   bool temperature_difference = false;
 

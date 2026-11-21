@@ -148,6 +148,10 @@ auto to_string(const DiagnosticCode code) noexcept -> std::string_view {
   case DiagnosticCode::OutOfRange: return "out-of-range";
   case DiagnosticCode::Deprecated: return "deprecated";
   case DiagnosticCode::UnusedKeyword: return "unused-keyword";
+  case DiagnosticCode::UnknownDictionary: return "unknown-dictionary";
+  case DiagnosticCode::GrammarMismatch: return "grammar-mismatch";
+  case DiagnosticCode::ReferenceCycle: return "reference-cycle";
+  case DiagnosticCode::UnreferencedDictionary: return "unreferenced-dictionary";
   case DiagnosticCode::Other: return "other";
   }
   return "other";

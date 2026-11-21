@@ -38,6 +38,7 @@
 #include "DictionaryParser.h"
 #include "DictionaryUtilities.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -214,12 +215,84 @@ Dictionary &DictionaryManager::operator()(std::string_view name) {
   const auto it = map_of_dictionaries_.find(name);
   if (it == map_of_dictionaries_.end()) {
     const std::string suggestion = detail::closest_match(name, names());
-    ErrorMessage("the dictionary '" + std::string(name) + "' was not defined",
-                 {},
-                 suggestion.empty() ? std::string()
-                                    : "did you mean '" + suggestion + "'?");
+    throw DictionaryError(
+        {Diagnostic{Severity::Error, DiagnosticCode::UnknownDictionary, {},
+                    "the dictionary '" + std::string(name) + "' was not defined",
+                    suggestion.empty() ? std::string()
+                                       : "did you mean '" + suggestion + "'?",
+                    {}}},
+        "DictionaryManager");
   }
   return it->second;
+}
+
+Dictionary &DictionaryManager::AttachGrammar(
+    std::string_view name, const void *grammar_id,
+    const std::string &grammar_name,
+    const std::function<void(Dictionary &)> &attach,
+    const SourceLocation &from) {
+  const auto it = map_of_dictionaries_.find(name);
+  if (it == map_of_dictionaries_.end()) {
+    const std::string suggestion = detail::closest_match(name, names());
+    throw DictionaryError(
+        {Diagnostic{Severity::Error, DiagnosticCode::UnknownDictionary, from,
+                    "the dictionary '" + std::string(name) +
+                        "' is referenced, but it was not defined",
+                    suggestion.empty() ? std::string()
+                                       : "did you mean '" + suggestion + "'?",
+                    {}}},
+        "DictionaryManager");
+  }
+  Dictionary &dictionary = it->second;
+  const auto done = attached_.find(name);
+  if (done != attached_.end()) {
+    if (done->second.id == grammar_id)
+      return dictionary;
+    Diagnostic diagnostic{Severity::Error, DiagnosticCode::GrammarMismatch,
+                          from.has_position() ? from : dictionary.location(),
+                          "the dictionary '" + std::string(name) +
+                              "' is used as '" + grammar_name +
+                              "', but it is already used as '" +
+                              done->second.grammar + "'",
+                          "a dictionary can be read with one grammar only: "
+                          "use two dictionaries",
+                          {}};
+    throw DictionaryError({std::move(diagnostic)}, "DictionaryManager");
+  }
+  attach(dictionary);
+  attached_.emplace(std::string(name), Attached{grammar_id, grammar_name});
+  return dictionary;
+}
+
+auto DictionaryManager::FinishValidation(
+    std::vector<Diagnostic> diagnostics,
+    const std::vector<std::string> &visited) const -> std::vector<Diagnostic> {
+  std::vector<Diagnostic> warnings;
+  for (const auto &[name, dictionary] : map_of_dictionaries_) {
+    if (std::find(visited.begin(), visited.end(), name) == visited.end()) {
+      warnings.push_back(Diagnostic{
+          Severity::Warning, DiagnosticCode::UnreferencedDictionary,
+          dictionary.location(),
+          "the dictionary '" + name +
+              "' is not referenced (directly or indirectly) by the validated "
+              "dictionary",
+          "check the spelling of the references to it", {}});
+      continue;
+    }
+    for (const auto &warning : dictionary.warnings())
+      warnings.push_back(warning);
+  }
+  if (warnings_as_errors_)
+    for (auto &warning : warnings) {
+      warning.severity = Severity::Error;
+      diagnostics.push_back(std::move(warning));
+    }
+  bool errors = false;
+  for (const auto &d : diagnostics)
+    errors = errors || d.severity == Severity::Error;
+  if (errors)
+    throw DictionaryError(std::move(diagnostics), "DictionaryManager");
+  return warnings_as_errors_ ? std::vector<Diagnostic>{} : warnings;
 }
 
 void DictionaryManager::SetUnitSystem(const units::UnitSystem &system) {

@@ -872,8 +872,8 @@ void DictionaryGrammar::Check() {
     std::size_t forced = 0;
     std::vector<std::string> names;
     for (const std::size_t m : group.members) {
-      usable += dead[m].empty() ? 1 : 0;
-      forced += always[m] ? 1 : 0;
+      usable += dead[m].empty() ? std::size_t{1} : std::size_t{0};
+      forced += always[m] ? std::size_t{1} : std::size_t{0};
       names.push_back(name_of(m));
     }
     const bool needs = rule.kind != Rule::Kind::AtMost;
