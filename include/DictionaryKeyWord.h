@@ -44,6 +44,7 @@
 #include <utility>
 #include <vector>
 
+#include "DictionaryFormats.h"
 #include "DictionaryUnits.h"
 
 namespace OpenSMOKEpp {
@@ -89,7 +90,9 @@ enum DictionaryKeyWordTypes {
   /** \brief Sequence of repeated integer/string token pairs. */
   VECTOR_INT_STRING,
   /** \brief Raw option string preserving all tokens after the keyword. */
-  SEQUENCE_STRING
+  SEQUENCE_STRING,
+  /** \brief Value described by a `ValueFormat` (read with `Read<T>`). */
+  STRUCTURED
 };
 
 /**
@@ -158,6 +161,49 @@ public:
                     const std::string &compulsory_alternatives,
                     const std::string &required_keywords,
                     const std::string &conflicting_keywords);
+
+  /**
+   * \brief Constructs a keyword whose value is described by a format.
+   *
+   * \code
+   * DictionaryKeyWord("@InternalConnections",
+   *                   formats::List(formats::Record(
+   *                       {{"from", formats::Integer()},
+   *                        {"to", formats::Integer()},
+   *                        {"flow", formats::Quantity(units::dim::MassFlowRate)}})),
+   *                   "Connections between reactors", false);
+   * \endcode
+   *
+   * \param[in] name Keyword name, including the leading `@`.
+   * \param[in] format Format of the value (type `STRUCTURED`).
+   * \param[in] short_comment Human-readable short description.
+   * \param[in] is_compulsory `true` if the keyword is compulsory.
+   */
+  DictionaryKeyWord(const std::string &name, ValueFormat format,
+                    const std::string &short_comment, bool is_compulsory);
+
+  /**
+   * \brief Constructs a keyword with a format and legacy relationships.
+   *
+   * \param[in] name Keyword name, including the leading `@`.
+   * \param[in] format Format of the value (type `STRUCTURED`).
+   * \param[in] short_comment Human-readable short description.
+   * \param[in] is_compulsory `true` if the keyword is compulsory.
+   * \param[in] compulsory_alternatives Space-delimited alternatives, or `none`.
+   * \param[in] required_keywords Space-delimited required keywords, or `none`.
+   * \param[in] conflicting_keywords Space-delimited conflicting keywords, or
+   * `none`.
+   */
+  DictionaryKeyWord(const std::string &name, ValueFormat format,
+                    const std::string &short_comment, bool is_compulsory,
+                    const std::string &compulsory_alternatives,
+                    const std::string &required_keywords,
+                    const std::string &conflicting_keywords);
+
+  /** \brief Format of a `STRUCTURED` keyword. */
+  [[nodiscard]] const std::optional<ValueFormat> &format() const noexcept {
+    return format_;
+  }
 
   /**
    * \brief Constructs a keyword rule from seven grammar-file lines.
@@ -499,6 +545,9 @@ private:
 
   /** \brief Physical dimension of a measure keyword. */
   std::optional<units::Dimension> dimension_;
+
+  /** \brief Format of a `STRUCTURED` keyword. */
+  std::optional<ValueFormat> format_;
 
   /** \brief Default value text. */
   std::optional<std::string> default_value_;

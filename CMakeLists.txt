@@ -28,6 +28,7 @@ set(DICTIONARY_PARSER_CORPUS_DIR "${_default_corpus}" CACHE PATH
 add_library(dictionary_parser
 	src/Dictionary.cpp
 	src/DictionaryDiagnostics.cpp
+	src/DictionaryFormats.cpp
 	src/DictionaryGrammar.cpp
 	src/DictionaryInputFile.cpp
 	src/DictionaryKeyWord.cpp
@@ -104,10 +105,11 @@ if (DICTIONARY_PARSER_BUILD_TESTS)
 		tests/test_units.cpp
 		tests/test_diagnostics.cpp
 		tests/test_rules.cpp
+		tests/test_formats.cpp
 	)
 	target_compile_definitions(unit_tests PRIVATE
 		DICTIONARY_PARSER_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
-	foreach(suite lexer syntax include reads grammar validation units measures diagnostics rules semantics)
+	foreach(suite lexer syntax include reads grammar validation units measures diagnostics rules semantics formats typed)
 		add_test(NAME Unit_${suite} COMMAND unit_tests ${suite})
 	endforeach()
 

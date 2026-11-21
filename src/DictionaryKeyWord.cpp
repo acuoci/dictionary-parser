@@ -72,6 +72,7 @@ constexpr TypeInfo type_table[] = {
     {VECTOR_INT_STRING, "vector_int_string",
      "ReadOption(std::vector<int>&, std::vector<std::string>&)"},
     {SEQUENCE_STRING, "sequence_string", "ReadSequence"},
+    {STRUCTURED, "structured", "Read<T> or ReadValue"},
 };
 } // namespace
 
@@ -127,6 +128,25 @@ DictionaryKeyWord::DictionaryKeyWord(const std::string &name,
   SetConflictingKeywords(line3);
 
   SetTypeASCII();
+}
+
+DictionaryKeyWord::DictionaryKeyWord(const std::string &name, ValueFormat format,
+                                     const std::string &short_comment,
+                                     const bool is_compulsory)
+    : DictionaryKeyWord(name, STRUCTURED, short_comment, is_compulsory) {
+  format_ = std::move(format);
+}
+
+DictionaryKeyWord::DictionaryKeyWord(const std::string &name, ValueFormat format,
+                                     const std::string &short_comment,
+                                     const bool is_compulsory,
+                                     const std::string &compulsory_alternatives,
+                                     const std::string &required_keywords,
+                                     const std::string &conflicting_keywords)
+    : DictionaryKeyWord(name, STRUCTURED, short_comment, is_compulsory,
+                        compulsory_alternatives, required_keywords,
+                        conflicting_keywords) {
+  format_ = std::move(format);
 }
 
 void DictionaryKeyWord::SetTypeASCII() {

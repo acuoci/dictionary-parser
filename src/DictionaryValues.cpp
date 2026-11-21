@@ -221,6 +221,10 @@ auto validate_value(const DictionaryKeyWord &keyword,
   };
 
   switch (keyword.type()) {
+  case STRUCTURED:
+    if (keyword.format())
+      return parse_value(*keyword.format(), values, system).problems;
+    break;
   case NONE:
     if (n != 0)
       problem("no value is expected, but " + std::to_string(n) +

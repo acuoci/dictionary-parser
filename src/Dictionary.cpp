@@ -429,28 +429,96 @@ auto Dictionary::Lookup(std::string_view name_of_keyword,
   return std::nullopt;
 }
 
+void Dictionary::FailLookup(std::string_view name_of_keyword,
+                            const ParseError &error) const {
+  DiagnosticCode code = DiagnosticCode::Other;
+  SourceLocation where;
+  switch (error.code) {
+  case ParseErrorCode::NoGrammar: code = DiagnosticCode::NoGrammar; break;
+  case ParseErrorCode::UndeclaredKeyword:
+    code = DiagnosticCode::UndeclaredKeyword;
+    break;
+  case ParseErrorCode::WrongType: code = DiagnosticCode::WrongType; break;
+  case ParseErrorCode::MissingKeyword:
+    code = DiagnosticCode::MissingKeyword;
+    where = location_of(name_of_keyword);
+    break;
+  default: code = DiagnosticCode::InvalidValue; break;
+  }
+  Fail({Diagnostic{Severity::Error, code, where, error.message, {}, {}}});
+}
+
 std::size_t
 Dictionary::CheckOption(std::string_view name_of_keyword,
                         const DictionaryKeyWordTypes expected_type) const {
   std::size_t index = 0;
-  if (const auto error = Lookup(name_of_keyword, expected_type, index)) {
-    DiagnosticCode code = DiagnosticCode::Other;
-    SourceLocation where;
-    switch (error->code) {
-    case ParseErrorCode::NoGrammar: code = DiagnosticCode::NoGrammar; break;
-    case ParseErrorCode::UndeclaredKeyword:
-      code = DiagnosticCode::UndeclaredKeyword;
-      break;
-    case ParseErrorCode::WrongType: code = DiagnosticCode::WrongType; break;
-    case ParseErrorCode::MissingKeyword:
-      code = DiagnosticCode::MissingKeyword;
-      where = location_of(name_of_keyword);
-      break;
-    default: code = DiagnosticCode::InvalidValue; break;
-    }
-    Fail({Diagnostic{Severity::Error, code, where, error->message, {}, {}}});
-  }
+  if (const auto error = Lookup(name_of_keyword, expected_type, index))
+    FailLookup(name_of_keyword, *error);
   return index;
+}
+
+auto Dictionary::LookupAny(std::string_view name_of_keyword,
+                           std::size_t &index) const
+    -> std::optional<ParseError> {
+  const DictionaryKeyWord *declared = has_grammar_
+                                          ? grammar_.FindKeyWord(name_of_keyword)
+                                          : nullptr;
+  // Delegate to the typed lookup with the declared type: same messages.
+  return Lookup(name_of_keyword, declared != nullptr ? declared->type() : NONE,
+                index);
+}
+
+Value Dictionary::ReadValue(std::string_view name_of_keyword) {
+  std::size_t index = 0;
+  if (const auto error = LookupAny(name_of_keyword, index))
+    FailLookup(name_of_keyword, *error);
+  const DictionaryKeyWord &declared = *grammar_.FindKeyWord(name_of_keyword);
+  if (declared.type() == NONE)
+    return Value{};
+  auto outcome = detail::parse_value(detail::format_of(declared),
+                                     entries_[index].values, unit_system_);
+  if (outcome.problems.empty())
+    return std::move(outcome.value);
+  std::vector<Diagnostic> diagnostics;
+  for (auto &problem : outcome.problems) {
+    const SourceLocation where = problem.token == detail::keyword_token
+                                     ? KeywordLocation(index)
+                                     : TokenLocation(index, problem.token);
+    diagnostics.push_back(Diagnostic{
+        Severity::Error, problem.code, where,
+        "keyword " + entries_[index].keyword + ": " + problem.message,
+        std::move(problem.hint), {}});
+  }
+  Fail(std::move(diagnostics));
+}
+
+void Dictionary::ThrowConversionError(std::string_view name_of_keyword,
+                                      const std::string &reason) const {
+  const DictionaryKeyWord *declared = grammar_.FindKeyWord(name_of_keyword);
+  std::string message = "the value of " + std::string(name_of_keyword) +
+                        " cannot be read as the requested C++ type: " + reason;
+  if (declared != nullptr)
+    message += " (the value is " +
+               detail::format_of(*declared).describe(unit_system_) + ")";
+  Fail({Diagnostic{Severity::Error, DiagnosticCode::WrongType, {},
+                   std::move(message), {}, {}}});
+}
+
+auto Dictionary::ToParseError(const DictionaryError &error) -> ParseError {
+  const Diagnostic &d = error.diagnostics().front();
+  ParseErrorCode code = ParseErrorCode::InvalidValue;
+  switch (d.code) {
+  case DiagnosticCode::NoGrammar: code = ParseErrorCode::NoGrammar; break;
+  case DiagnosticCode::UndeclaredKeyword:
+    code = ParseErrorCode::UndeclaredKeyword;
+    break;
+  case DiagnosticCode::MissingKeyword:
+    code = ParseErrorCode::MissingKeyword;
+    break;
+  case DiagnosticCode::WrongType: code = ParseErrorCode::WrongType; break;
+  default: break;
+  }
+  return ParseError{code, d.message, d.location.line, d.location.column};
 }
 
 auto Dictionary::TryReadDouble(std::string_view name_of_keyword)

@@ -12,6 +12,32 @@ Scope of the study:
 
 ## 0. Progress log
 
+### Phase 4 (option formats and typed reads): done (branch `feature/phase4`, 2026-11-21)
+
+Delivered:
+- **`DictionaryFormats.h`:** an immutable, composable `ValueFormat` with these pieces:
+  - `Integer` and `Real` (with bounds), `Boolean`, `Word`, `Text`;
+  - `Enumeration` with `Alias` and `Disable` (feature gating with a reason);
+  - `Quantity(dim)` (SI), `Record` (named fields), `List` (fixed-width elements, size), `QuantityList`, `Table` (units header, `-` for dimensionless columns, SI values), `Choice`, and `Composition`.
+- **Keywords with a format** (`STRUCTURED` type, new constructors):
+  - formats are validated when the grammar is built (`problems()`);
+  - values are validated when the grammar is attached, with element/field context in messages and token-precise locations;
+  - defaults, conditions (enumeration aliases compared by value) and `@Help`/`Describe()` all support formats.
+- **Typed reads for every keyword**, legacy types included, through a format equivalent to each legacy type:
+  - `ReadValue()` returns a `Value` tree;
+  - `Read<T>()` supports `bool`, range-checked integers, floating point, `std::string`, enums, `std::vector`/`array`/`pair`/`tuple`/`variant`;
+  - `TryRead<T>()` returns a `ParseResult` (this generalizes the old double-only `TryReadDouble`);
+  - shape mismatches have the code `wrong-type`.
+- **Header templates** are limited to the C++ type converters; parsing and validation stay in `src/`.
+
+Verification:
+- 14 new test cases (106 in total); 18/18 CTest targets pass, also with ASan/UBSan and `-Werror`.
+- **Corpus:** output identical.
+- **Grammars:** all 5 MOM grammars and 98 of 99 OpenSMOKE++2 grammars unchanged.
+- **MOM:** its dictionary test passes.
+
+Not covered: structured keywords cannot be declared in grammar files yet (C++ grammars only; a file grammar using `type: structured` is rejected with an explanation).
+
 ### Phase 3 (rule engine and keyword semantics): done (branch `feature/phase3`, 2026-11-21)
 
 Delivered:

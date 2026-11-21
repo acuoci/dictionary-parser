@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "DictionaryDiagnostics.h"
+#include "DictionaryFormats.h"
 #include "DictionaryKeyWord.h"
 #include "DictionaryUnits.h"
 
@@ -116,6 +117,31 @@ struct ValueProblem {
                                   const std::vector<std::string> &values,
                                   const units::UnitSystem &system)
     -> std::vector<ValueProblem>;
+/** \brief Result of parsing a value with a format. */
+struct ParseOutcome {
+  /** \brief Parsed value (meaningful only without problems). */
+  Value value;
+  /** \brief Problems found. */
+  std::vector<ValueProblem> problems;
+};
+
+/**
+ * \brief Parses value tokens with a format.
+ *
+ * \param[in] format Format of the value.
+ * \param[in] values Value tokens (quotes removed).
+ * \param[in] system Unit system of the converted quantities.
+ * \return The value and the problems found.
+ */
+[[nodiscard]] auto parse_value(const ValueFormat &format,
+                               const std::vector<std::string> &values,
+                               const units::UnitSystem &system) -> ParseOutcome;
+
+/**
+ * \brief Returns the format equivalent to the type of a keyword (the format
+ * itself for `STRUCTURED` keywords).
+ */
+[[nodiscard]] auto format_of(const DictionaryKeyWord &keyword) -> ValueFormat;
 } // namespace OpenSMOKEpp::detail
 
 #endif // OpenSMOKEpp_DictionaryValues_H

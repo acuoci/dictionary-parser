@@ -98,10 +98,40 @@ constexpr std::size_t none = static_cast<std::size_t>(-1);
   }
 }
 
-[[nodiscard]] auto is_single_token_type(const DictionaryKeyWordTypes type)
-    -> bool {
+[[nodiscard]] auto is_single_token(const DictionaryKeyWord &keyword) -> bool {
+  const auto type = keyword.type();
+  if (type == STRUCTURED) {
+    if (!keyword.format() || keyword.format()->width() != std::size_t{1})
+      return false;
+    const auto kind = keyword.format()->kind();
+    return kind == ValueFormat::Kind::Integer ||
+           kind == ValueFormat::Kind::Boolean ||
+           kind == ValueFormat::Kind::Word ||
+           kind == ValueFormat::Kind::Enumeration;
+  }
   return type == SINGLE_STRING || type == SINGLE_BOOL || type == SINGLE_INT ||
          type == SINGLE_CHAR || type == SINGLE_DICTIONARY;
+}
+
+// Equality of two single-token values of a keyword (booleans by value,
+// enumeration aliases by their canonical value).
+[[nodiscard]] auto same_value(const DictionaryKeyWord &keyword,
+                              const std::string &a, const std::string &b)
+    -> bool {
+  const ValueFormat format = detail::format_of(keyword);
+  const auto x = detail::parse_value(format, {a}, units::si_kmol);
+  const auto y = detail::parse_value(format, {b}, units::si_kmol);
+  if (!x.problems.empty() || !y.problems.empty())
+    return a == b;
+  if (x.value.kind != y.value.kind)
+    return false;
+  switch (x.value.kind) {
+  case Value::Kind::Integer: return x.value.integer == y.value.integer;
+  case Value::Kind::Boolean: return x.value.boolean == y.value.boolean;
+  case Value::Kind::Real: return x.value.real == y.value.real;
+  case Value::Kind::Text: return x.value.text == y.value.text;
+  default: return a == b;
+  }
 }
 
 [[nodiscard]] auto format_number(const double value) -> std::string {
@@ -546,7 +576,7 @@ void DictionaryGrammar::Check() {
     const DictionaryKeyWord &tested = keywords_[it->second];
     if (c.kind != Condition::Kind::Equals && c.kind != Condition::Kind::OneOf)
       continue;
-    if (!is_single_token_type(tested.type())) {
+    if (!is_single_token(tested)) {
       problems.push_back(what + " compares the value of " + c.keyword +
                          ", whose type (" + tested.type_ascii() +
                          ") is not a single string, boolean, integer, "
@@ -578,12 +608,29 @@ void DictionaryGrammar::Check() {
   for (const auto &k : keywords_) {
     const std::string &name = k.name();
     const auto type = k.type();
-    if (k.dimension() && type != SINGLE_MEASURE && type != VECTOR_MEASURE)
+    if (type == STRUCTURED) {
+      if (!k.format())
+        problems.push_back("the structured keyword " + name +
+                           " has no format (structured keywords can only be "
+                           "declared in C++ grammars)");
+      else
+        for (const auto &problem : k.format()->problems())
+          problems.push_back("the format of " + name + " is not valid: " +
+                             problem);
+      if (k.dimension() || !k.allowed_values().empty() || k.minimum() ||
+          k.maximum() || k.size_min() || k.size_max() || k.sum())
+        problems.push_back("the structured keyword " + name +
+                           " declares a dimension, allowed values, a range, "
+                           "a size or a sum: use the format modifiers "
+                           "instead (e.g. formats::Real().Minimum(0))");
+    }
+    if (k.dimension() && type != SINGLE_MEASURE && type != VECTOR_MEASURE &&
+        type != STRUCTURED)
       problems.push_back("the keyword " + name + " declares a dimension (" +
                          units::describe(*k.dimension()) +
                          "), but only single_measure and vector_measure "
                          "keywords can have one");
-    if (!k.allowed_values().empty()) {
+    if (!k.allowed_values().empty() && type != STRUCTURED) {
       if (type != SINGLE_STRING && type != VECTOR_STRING)
         problems.push_back("the keyword " + name +
                            " declares allowed values, but only single_string "
@@ -595,7 +642,7 @@ void DictionaryGrammar::Check() {
                              " has an empty or repeated allowed value '" +
                              value + "'");
     }
-    if (k.minimum() || k.maximum()) {
+    if ((k.minimum() || k.maximum()) && type != STRUCTURED) {
       if (!is_numeric_type(type))
         problems.push_back("the keyword " + name +
                            " declares a numeric range, but its type (" +
@@ -613,7 +660,7 @@ void DictionaryGrammar::Check() {
                            format_number(k.minimum()->value) + " to " +
                            format_number(k.maximum()->value));
     }
-    if (k.size_min() || k.size_max()) {
+    if ((k.size_min() || k.size_max()) && type != STRUCTURED) {
       if (!is_list_type(type))
         problems.push_back("the keyword " + name +
                            " declares a list size, but its type (" +
@@ -622,7 +669,7 @@ void DictionaryGrammar::Check() {
         problems.push_back("the keyword " + name +
                            " has a minimum size larger than its maximum size");
     }
-    if (k.sum()) {
+    if (k.sum() && type != STRUCTURED) {
       if (type != VECTOR_DOUBLE && type != VECTOR_STRING_DOUBLE)
         problems.push_back("the keyword " + name +
                            " declares a sum, but only vector_double and "
@@ -899,6 +946,8 @@ DictionaryGrammar::AvailableKeyWordsTable(std::string_view dictionary_name,
     if (keyword.dimension())
       out << "[" << units::si_unit(*keyword.dimension(), system) << "] ";
     out << std::left << keyword.comment_short();
+    if (keyword.format())
+      out << " (format: " << keyword.format()->describe(system) << ")";
     if (keyword.default_value())
       out << " (default: " << *keyword.default_value() << ")";
     if (!keyword.allowed_values().empty()) {
@@ -976,7 +1025,9 @@ std::string DictionaryGrammar::Describe(std::string_view title) const {
                                                 ? std::string()
                                                 : ": " + *k.deprecated()));
     const auto it = required.find(k.name());
-    out << "| `" << k.name() << "` | " << k.type_ascii() << " | "
+    out << "| `" << k.name() << "` | "
+        << (k.format() ? escape(k.format()->describe()) : k.type_ascii())
+        << " | "
         << (k.dimension() ? units::si_unit(*k.dimension()) : std::string())
         << " | "
         << (k.default_value() ? "`" + escape(*k.default_value()) + "`"
@@ -1048,13 +1099,8 @@ auto DictionaryGrammar::CollectRuleViolations(
     if (!value)
       return false;
     const DictionaryKeyWord *declared = FindKeyWord(keyword);
-    if (declared != nullptr && declared->type() == SINGLE_BOOL) {
-      bool a = false;
-      bool b = false;
-      return detail::parse_bool_token(*value, a) &&
-             detail::parse_bool_token(expected, b) && a == b;
-    }
-    return *value == expected;
+    return declared != nullptr ? same_value(*declared, *value, expected)
+                               : *value == expected;
   };
   const auto holds = [&](const Condition &c) {
     switch (c.kind) {

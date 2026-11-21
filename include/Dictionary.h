@@ -51,6 +51,7 @@
 #include <vector>
 
 #include "DictionaryDiagnostics.h"
+#include "DictionaryFormats.h"
 #include "DictionaryGrammar.h"
 #include "DictionaryLexer.h"
 
@@ -109,7 +110,9 @@ public:
     /** \brief No grammar is attached to the dictionary. */
     NoGrammar,
     /** \brief The requested keyword is not declared in the grammar. */
-    UndeclaredKeyword
+    UndeclaredKeyword,
+    /** \brief The value is invalid (units, allowed values, range, ...). */
+    InvalidValue
   };
 
   /**
@@ -383,6 +386,67 @@ public:
   /** \brief Returns the target unit system of the converting reads. */
   [[nodiscard]] const units::UnitSystem &unit_system() const noexcept {
     return unit_system_;
+  }
+
+  /**
+   * \brief Reads the parsed value of any keyword.
+   *
+   * The value is parsed with the keyword format (or the format equivalent to
+   * its legacy type): quantities are converted to SI, enumeration values
+   * carry their code, records, lists and tables are sequences.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \return The parsed value (the grammar default if the keyword is absent).
+   * \warning Throws `DictionaryError` if no grammar is attached, the keyword
+   * is undeclared or absent without default, or the value is invalid.
+   */
+  [[nodiscard]] Value ReadValue(std::string_view name_of_keyword);
+
+  /**
+   * \brief Reads any keyword as a C++ value.
+   *
+   * Works for every keyword type, legacy types included:
+   * \code
+   * auto n       = dict.Read<int>("@Points");
+   * auto T       = dict.Read<double>("@Temperature");          // SI if dimensioned
+   * auto x       = dict.Read<std::vector<std::pair<std::string, double>>>("@MoleFractions");
+   * auto links   = dict.Read<std::vector<std::tuple<int, int, double>>>("@InternalConnections");
+   * auto profile = dict.Read<std::vector<std::array<double, 2>>>("@Profile");
+   * auto solver  = dict.Read<SolverType>("@OdeSolver");          // enumeration code
+   * auto species = dict.Read<std::variant<std::string, std::vector<std::string>>>("@Species");
+   * \endcode
+   * Supported types: `bool`, integers, floating-point types, `std::string`,
+   * enums (enumeration codes), and `std::vector`, `std::array`,
+   * `std::pair`, `std::tuple`, `std::variant` (one alternative per choice)
+   * of supported types.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \return The value converted to `T`.
+   * \warning Throws `DictionaryError` as `ReadValue`, or with code
+   * `WrongType` if the value does not have the shape of `T`.
+   */
+  template <typename T> [[nodiscard]] T Read(std::string_view name_of_keyword) {
+    const Value value = ReadValue(name_of_keyword);
+    try {
+      return detail::ValueConverter<T>::from(value);
+    } catch (const detail::ValueShapeError &error) {
+      ThrowConversionError(name_of_keyword, error.what());
+    }
+  }
+
+  /**
+   * \brief Non-throwing version of `Read<T>`.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \return The value, or the first error.
+   */
+  template <typename T>
+  [[nodiscard]] ParseResult<T> TryRead(std::string_view name_of_keyword) {
+    try {
+      return ParseResult<T>::Success(Read<T>(name_of_keyword));
+    } catch (const DictionaryError &error) {
+      return ParseResult<T>::Failure(ToParseError(error));
+    }
   }
 
   /**
@@ -725,6 +789,23 @@ private:
 
   /** \brief Context line used in exceptions. */
   [[nodiscard]] auto Context() const -> std::string;
+
+  /** \brief Throws the error of a value that does not fit a C++ type. */
+  [[noreturn]] void ThrowConversionError(std::string_view name_of_keyword,
+                                         const std::string &reason) const;
+
+  /** \brief Converts the first error of an exception to a `ParseError`. */
+  [[nodiscard]] static auto ToParseError(const DictionaryError &error)
+      -> ParseError;
+
+  /** \brief Throws the error described by a failed lookup. */
+  [[noreturn]] void FailLookup(std::string_view name_of_keyword,
+                               const ParseError &error) const;
+
+  /** \brief Lookup without type check (used by `ReadValue`). */
+  [[nodiscard]] auto LookupAny(std::string_view name_of_keyword,
+                               std::size_t &index) const
+      -> std::optional<ParseError>;
 
   /** \brief Throws a `DictionaryError` with the given diagnostics. */
   [[noreturn]] void Fail(std::vector<Diagnostic> diagnostics) const;

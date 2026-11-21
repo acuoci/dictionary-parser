@@ -14,6 +14,7 @@ OpenSMOKE++ Dictionary Parser provides a compact parser for `Dictionary ... { ..
 | Parsing model | Dictionary blocks, `@Keyword` entries, semicolon terminators, multiline values |
 | Syntax | Inline dictionaries, `#include`, quoted strings, flexible brace placement |
 | Units | Dimensions declared in the grammar; units in the input checked and converted to SI automatically |
+| Option formats | Records, lists, tables with units, enumerations with aliases, choices; `Read<T>` into C++ types |
 | Validation | Grammar rules (counting, requirements, conflicts, conditional rules), defaults, allowed values, ranges, sizes and sums; every value checked at load time; coherence analysis of the grammar itself |
 | Error handling | `DictionaryError` with structured diagnostics; all problems reported together, compiler-style messages with source excerpts, "did you mean" suggestions; nothing printed by the library |
 | Tests | Unit tests, integration tests over `examples/`, optional corpus test |
@@ -301,6 +302,92 @@ validated. The grammar is rejected (with every problem listed) if, for example:
   can never be used, a counting rule without enough usable keywords, or with
   more always-required keywords than it allows).
 
+## Structured Options and Typed Reads
+
+### Formats
+
+Options that do not fit a fixed type (records, tables, lists of tuples,
+special values) are declared with a **format** (`DictionaryFormats.h`)
+built from a few composable pieces:
+
+```cpp
+using namespace OpenSMOKEpp::formats;
+namespace dim = OpenSMOKEpp::units::dim;
+
+// @InternalConnections  3 7 250.3 kg/s   4 8 1.2 kg/s;
+AddKeyWord(DictionaryKeyWord("@InternalConnections",
+    List(Record({{"from", Integer().Minimum(1)},
+                 {"to",   Integer().Minimum(1)},
+                 {"flow", Quantity(dim::MassFlowRate)}})),
+    "Connections between reactors", false));
+
+// @Profile  s K   0 300   1 500   2 800;      (units header, then rows)
+AddKeyWord(DictionaryKeyWord("@Profile",
+    Table({{"time", dim::Time}, {"temperature", dim::Temperature}}),
+    "Temperature profile", false));
+
+// @OutputSpecies ALL;   or   @OutputSpecies CH4 O2 CO2;
+AddKeyWord(DictionaryKeyWord("@OutputSpecies",
+    Choice({Enumeration({"ALL", "NONE"}), List(Word())}),
+    "Species written in output", false).SetDefault("ALL"));
+
+// @OdeSolver CVODE;   (aliases, and values disabled in this build)
+AddKeyWord(DictionaryKeyWord("@OdeSolver",
+    Enumeration({"OpenSMOKE++", "CVODE", "DASPK"})
+        .Alias("OpenSMOKE", "OpenSMOKE++")
+        .Alias("Cvode", "CVODE")
+        .Disable("DASPK", "OpenSMOKE++ was built without DASPK"),
+    "ODE solver", false));
+```
+
+| Format | Tokens |
+| --- | --- |
+| `Integer()`, `Real()` | one number; `.Minimum(x)`, `.Maximum(x)` |
+| `Boolean()` | `true`/`false`/`on`/`off` |
+| `Word()` | one token (possibly quoted) |
+| `Text()` | all remaining tokens, joined by blanks |
+| `Enumeration({...})` | one of the values; `.Alias(alias, value)`, `.Disable(value, reason)`; the code of a value is its index |
+| `Quantity(dim)` | number + units, converted to SI; bounds in SI |
+| `Record({{"name", format}, ...})` | fixed sequence of fields (only the last may have a variable length) |
+| `List(element, min, max)` | repetition of a fixed-width element; `.Size(n)` |
+| `QuantityList(dim)` | `1 m 20 cm` or `1 2 3 m`, converted to SI |
+| `Table({{"name", dim}, ...})` | one unit per column (`-` if dimensionless), then rows; SI values |
+| `Choice({...})` | the first alternative that matches the whole value |
+| `Composition()` | name/number pairs (`CH4 0.5 O2 0.5`) |
+
+Formats are validated when the grammar is built (for example a list of
+variable-length elements, or a bound on a word, is rejected), values are
+validated when the grammar is attached, and errors name the element and the
+field: `keyword @InternalConnections: element 2, field 'flow': units 'K'
+(temperature [K]) are not compatible with the expected mass flow rate
+[kg/s]`. Defaults and conditional rules work as for any keyword (a
+condition on an enumeration also accepts its aliases).
+
+### Typed Reads
+
+`Read<T>` reads **any** keyword (legacy types included) directly as a C++
+value; `TryRead<T>` is the non-throwing version and `ReadValue` returns the
+parsed value tree:
+
+```cpp
+auto n       = dict.Read<int>("@NumberOfPoints");
+auto T       = dict.Read<double>("@Temperature");           // SI if dimensioned
+auto x       = dict.Read<std::vector<std::pair<std::string, double>>>("@MoleFractions");
+auto links   = dict.Read<std::vector<std::tuple<int, int, double>>>("@InternalConnections");
+auto profile = dict.Read<std::vector<std::array<double, 2>>>("@Profile");
+auto solver  = dict.Read<OdeSolver>("@OdeSolver");          // enum from the code
+auto species = dict.Read<std::variant<std::string, std::vector<std::string>>>("@OutputSpecies");
+
+if (auto r = dict.TryRead<double>("@Tolerance"); r)
+    use(r.value());
+```
+
+Supported types: `bool`, integers (range-checked), floating-point types,
+`std::string`, enums, and `std::vector`, `std::array`, `std::pair`,
+`std::tuple`, `std::variant` (one alternative per `Choice` alternative) of
+supported types. A value that does not fit the requested type is an error
+with code `wrong-type`.
+
 ## Units of Measure
 
 Measure keywords can declare their physical dimension in the grammar. The
@@ -455,8 +542,9 @@ ctest --output-on-failure
 ```
 
 - `Unit_*`: lexer, syntax, `#include`, typed reads, grammar coherence,
-  dictionary validation, units, measures, diagnostics, rules and keyword
-  semantics (`unit_tests [suite...]` runs selected suites).
+  dictionary validation, units, measures, diagnostics, rules, keyword
+  semantics, formats and typed reads (`unit_tests [suite...]` runs selected
+  suites).
 - `Test_Example_*`: parse the input files in `examples/`, including a
   grammar-aware test for `input3.dic`.
 - `Test_Corpus`: parses every `*.dic` file below `DICTIONARY_PARSER_CORPUS_DIR`
@@ -491,6 +579,7 @@ Then include public headers:
 | `DictionaryGrammar.h` | Base class for user-defined grammar rules and coherence checks |
 | `DictionaryKeyWord.h` | Keyword metadata, value types, dimensions, defaults and constraints |
 | `DictionaryRules.h` | Structural rules and conditions (`rules::Exactly`, `rules::When`, ...) |
+| `DictionaryFormats.h` | Value formats (`formats::Record`, `List`, `Table`, `Choice`, ...) and the `Value` tree |
 | `DictionaryUnits.h` | Dimensions, unit parsing and conversion to SI |
 | `DictionaryInputFile.h` | Preprocessed input-file representation |
 | `DictionaryDiagnostics.h` | `Diagnostic`, `DictionaryError`, source locations and rendering |
