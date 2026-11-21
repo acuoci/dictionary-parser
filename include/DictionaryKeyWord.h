@@ -36,10 +36,12 @@
 #ifndef OpenSMOKEpp_DictionaryKeyWord_H
 #define OpenSMOKEpp_DictionaryKeyWord_H
 
+#include <cstddef>
 #include <iosfwd>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "DictionaryUnits.h"
@@ -206,6 +208,175 @@ public:
     return dimension_;
   }
 
+  /** \brief Lower or upper bound of a numeric value. */
+  struct Bound {
+    /** \brief Bound value (in SI units for measures). */
+    double value = 0.0;
+    /** \brief Whether the bound itself is allowed. */
+    bool inclusive = true;
+  };
+
+  /**
+   * \brief Declares the value used when the keyword is absent.
+   *
+   * The default is written as in an input file (`"1800 kg/m3"`, `"true"`,
+   * `"CH4 0.5 O2 0.5"`) and is validated against the type, the dimension and
+   * the constraints of the keyword when the grammar is built. `Read*`
+   * functions return it when the keyword is not in the file;
+   * `Dictionary::CheckOption` still reports only what is written in the file.
+   * A compulsory keyword cannot have a default.
+   *
+   * \param[in] value Default value text.
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetDefault(std::string value) {
+    default_value_ = std::move(value);
+    return *this;
+  }
+
+  /**
+   * \brief Restricts a string keyword to a set of values.
+   *
+   * Applies to `single_string` and `vector_string` keywords; the check is
+   * case-sensitive and suggests the closest allowed value.
+   *
+   * \param[in] values Allowed values.
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetAllowedValues(std::vector<std::string> values) {
+    allowed_values_ = std::move(values);
+    return *this;
+  }
+
+  /**
+   * \brief Sets a lower bound for numeric values.
+   *
+   * Applies to integer, double and measure keywords (scalars and lists, and
+   * the numbers of `vector_string_double`). For measures the bound is in SI
+   * units and requires a declared dimension.
+   *
+   * \param[in] value Lower bound.
+   * \param[in] inclusive Whether `value` itself is allowed.
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetMinimum(double value, bool inclusive = true) {
+    minimum_ = Bound{value, inclusive};
+    return *this;
+  }
+
+  /**
+   * \brief Sets an upper bound for numeric values (see `SetMinimum`).
+   *
+   * \param[in] value Upper bound.
+   * \param[in] inclusive Whether `value` itself is allowed.
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetMaximum(double value, bool inclusive = true) {
+    maximum_ = Bound{value, inclusive};
+    return *this;
+  }
+
+  /**
+   * \brief Requires a list to have exactly `n` elements.
+   *
+   * For pair types (`vector_string_double`, `vector_int_string`,
+   * `vector_measure`) the size counts pairs (measures).
+   *
+   * \param[in] n Number of elements.
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetSize(std::size_t n) { return SetSize(n, n); }
+
+  /**
+   * \brief Requires a list to have between `minimum` and `maximum` elements.
+   *
+   * \param[in] minimum Minimum number of elements.
+   * \param[in] maximum Maximum number of elements.
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetSize(std::size_t minimum, std::size_t maximum) {
+    size_min_ = minimum;
+    size_max_ = maximum;
+    return *this;
+  }
+
+  /**
+   * \brief Requires the numbers of a list to add up to `target`.
+   *
+   * Applies to `vector_double` and `vector_string_double` (e.g. mole
+   * fractions: `SetSum(1.0, 1e-6)`).
+   *
+   * \param[in] target Expected sum.
+   * \param[in] tolerance Accepted absolute difference.
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetSum(double target, double tolerance = 1e-6) {
+    sum_ = std::pair<double, double>{target, tolerance};
+    return *this;
+  }
+
+  /**
+   * \brief Marks the keyword as deprecated.
+   *
+   * Using it produces a warning (see `Dictionary::warnings()`).
+   *
+   * \param[in] message Advice shown to the user, e.g. `use @NewName`.
+   * \return Reference to this keyword, for chaining.
+   */
+  DictionaryKeyWord &SetDeprecated(std::string message = {}) {
+    deprecated_ = std::move(message);
+    return *this;
+  }
+
+  /** \brief Default value text, if any. */
+  [[nodiscard]] const std::optional<std::string> &default_value() const noexcept {
+    return default_value_;
+  }
+  /** \brief Allowed values (empty: unrestricted). */
+  [[nodiscard]] const std::vector<std::string> &allowed_values() const noexcept {
+    return allowed_values_;
+  }
+  /** \brief Lower bound, if any. */
+  [[nodiscard]] const std::optional<Bound> &minimum() const noexcept {
+    return minimum_;
+  }
+  /** \brief Upper bound, if any. */
+  [[nodiscard]] const std::optional<Bound> &maximum() const noexcept {
+    return maximum_;
+  }
+  /** \brief Minimum list size, if any. */
+  [[nodiscard]] const std::optional<std::size_t> &size_min() const noexcept {
+    return size_min_;
+  }
+  /** \brief Maximum list size, if any. */
+  [[nodiscard]] const std::optional<std::size_t> &size_max() const noexcept {
+    return size_max_;
+  }
+  /** \brief Expected sum and tolerance, if any. */
+  [[nodiscard]] const std::optional<std::pair<double, double>> &
+  sum() const noexcept {
+    return sum_;
+  }
+  /** \brief Deprecation message, if the keyword is deprecated. */
+  [[nodiscard]] const std::optional<std::string> &deprecated() const noexcept {
+    return deprecated_;
+  }
+
+  /**
+   * \brief Parses an optional property line of a grammar file.
+   *
+   * Recognized lines (after the seven mandatory ones): `dimension: m/s
+   * [difference]`, `default: <value>`, `allowed_values: a b c`,
+   * `minimum: <x> [exclusive]`, `maximum: <x> [exclusive]`,
+   * `size: <n> [<max>]`, `sum: <target> [<tolerance>]`,
+   * `deprecated: <message>`.
+   *
+   * \param[in] line Trimmed line.
+   * \return `false` if the line is not a property line.
+   * \warning Throws `DictionaryError` if a property line is malformed.
+   */
+  bool SetPropertyFromLine(const std::string &line);
+
   /**
    * \brief Parses and stores an optional `dimension:` grammar-file line.
    *
@@ -328,6 +499,26 @@ private:
 
   /** \brief Physical dimension of a measure keyword. */
   std::optional<units::Dimension> dimension_;
+
+  /** \brief Default value text. */
+  std::optional<std::string> default_value_;
+
+  /** \brief Allowed values of a string keyword. */
+  std::vector<std::string> allowed_values_;
+
+  /** \brief Numeric bounds. */
+  std::optional<Bound> minimum_;
+  std::optional<Bound> maximum_;
+
+  /** \brief List size limits. */
+  std::optional<std::size_t> size_min_;
+  std::optional<std::size_t> size_max_;
+
+  /** \brief Expected sum and tolerance. */
+  std::optional<std::pair<double, double>> sum_;
+
+  /** \brief Deprecation message. */
+  std::optional<std::string> deprecated_;
 
 private:
   /**

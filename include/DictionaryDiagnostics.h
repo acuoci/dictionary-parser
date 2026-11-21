@@ -155,6 +155,19 @@ enum class DiagnosticCode {
   WrongDimension,
   /** \brief The grammar itself is incoherent. */
   GrammarIncoherent,
+  /** \brief A counting rule (`exactly`, `at least`, `at most`) is violated. */
+  Cardinality,
+  /** \brief A keyword is used where a rule forbids it. */
+  Forbidden,
+  /** \brief A value is not among the allowed values. */
+  NotAllowed,
+  /** \brief A value is outside its range, or a list has the wrong size or
+     sum. */
+  OutOfRange,
+  /** \brief A deprecated keyword is used. */
+  Deprecated,
+  /** \brief A keyword is written in the file but never read. */
+  UnusedKeyword,
   /** \brief Any other problem. */
   Other
 };

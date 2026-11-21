@@ -36,6 +36,7 @@
 #include "DictionaryGrammar.h"
 #include "DictionaryLexer.h"
 #include "DictionaryUtilities.h"
+#include "DictionaryValues.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -48,6 +49,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace OpenSMOKEpp {
 namespace {
@@ -64,8 +66,54 @@ constexpr std::size_t none = static_cast<std::size_t>(-1);
   return result;
 }
 
+[[nodiscard]] auto is_numeric_type(const DictionaryKeyWordTypes type) -> bool {
+  switch (type) {
+  case SINGLE_INT:
+  case SINGLE_DOUBLE:
+  case SINGLE_MEASURE:
+  case VECTOR_INT:
+  case VECTOR_DOUBLE:
+  case VECTOR_MEASURE:
+  case VECTOR_STRING_DOUBLE:
+  case VECTOR_INT_STRING:
+    return true;
+  default:
+    return false;
+  }
+}
+
+[[nodiscard]] auto is_list_type(const DictionaryKeyWordTypes type) -> bool {
+  switch (type) {
+  case VECTOR_INT:
+  case VECTOR_DOUBLE:
+  case VECTOR_STRING:
+  case VECTOR_CHAR:
+  case VECTOR_BOOL:
+  case VECTOR_MEASURE:
+  case VECTOR_STRING_DOUBLE:
+  case VECTOR_INT_STRING:
+    return true;
+  default:
+    return false;
+  }
+}
+
+[[nodiscard]] auto is_single_token_type(const DictionaryKeyWordTypes type)
+    -> bool {
+  return type == SINGLE_STRING || type == SINGLE_BOOL || type == SINGLE_INT ||
+         type == SINGLE_CHAR || type == SINGLE_DICTIONARY;
+}
+
+[[nodiscard]] auto format_number(const double value) -> std::string {
+  std::ostringstream out;
+  out << value;
+  return out.str();
+}
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
 auto DictionaryGrammar::Context() const -> std::string {
   std::string context = "Grammar";
   if (!name_.empty())
@@ -89,15 +137,19 @@ void DictionaryGrammar::DefineRules() {
 void DictionaryGrammar::UserDefined() {
   keywords_.clear();
   list_of_keywords_names_.clear();
+  user_rules_.clear();
+  rules_.clear();
   number_of_keywords_ = 0;
 
   DefineRules();
+  Finalize();
+}
 
+void DictionaryGrammar::Finalize() {
   number_of_keywords_ = static_cast<unsigned int>(keywords_.size());
   list_of_keywords_names_.resize(number_of_keywords_);
   for (unsigned int i = 0; i < number_of_keywords_; i++)
     list_of_keywords_names_[i] = keywords_[i].name();
-
   Check();
 }
 
@@ -105,10 +157,103 @@ void DictionaryGrammar::AddKeyWord(const DictionaryKeyWord &keyword) {
   keywords_.push_back(keyword);
 }
 
+void DictionaryGrammar::AddRule(Rule rule) {
+  user_rules_.push_back(std::move(rule));
+}
+
+auto DictionaryGrammar::ParseRuleLine(const std::string &line) const -> Rule {
+  const auto words = Lexer::split_whitespace_copy(line);
+  const auto fail = [&]() -> Rule {
+    ErrorMessage("invalid rule line '" + Lexer::trim_copy(line) +
+                 "'; expected for example 'rule: exactly 2 @T @P @Rho' or "
+                 "'rule: required @V when @Type = Variable'");
+  };
+  if (words.size() < 3)
+    return fail();
+
+  // Split off the condition.
+  std::vector<std::string> body(words.begin() + 1, words.end());
+  Condition condition;
+  if (const auto it = std::find(body.begin(), body.end(), "when");
+      it != body.end()) {
+    std::vector<std::string> c(it + 1, body.end());
+    body.erase(it, body.end());
+    if (c.size() == 2 && c[1] == "present")
+      condition = rules::Present(c[0]);
+    else if (c.size() == 2 && c[1] == "absent")
+      condition = rules::Absent(c[0]);
+    else if (c.size() == 3 && c[1] == "=")
+      condition = rules::Equals(c[0], c[2]);
+    else if (c.size() >= 3 && c[1] == "in")
+      condition = rules::OneOf(c[0], std::vector<std::string>(c.begin() + 2,
+                                                              c.end()));
+    else
+      return fail();
+  }
+  if (body.size() < 2)
+    return fail();
+
+  const std::string kind = body[0];
+  std::vector<std::string> names(body.begin() + 1, body.end());
+  const auto count = [&]() -> std::size_t {
+    std::size_t n = 0;
+    for (const char ch : names.front()) {
+      if (ch < '0' || ch > '9')
+        fail();
+      n = n * 10 + static_cast<std::size_t>(ch - '0');
+    }
+    names.erase(names.begin());
+    return n;
+  };
+  const auto split = [&]() {
+    if (names.size() < 2)
+      fail();
+    std::string first = names.front();
+    names.erase(names.begin());
+    return first;
+  };
+
+  Rule rule;
+  if (kind == "required" && names.size() == 1)
+    rule = rules::Required(names[0]);
+  else if (kind == "forbidden" && names.size() == 1)
+    rule = rules::Forbidden(names[0]);
+  else if (kind == "exactly" && names.size() >= 2) {
+    const std::size_t n = count();
+    rule = rules::Exactly(n, names);
+  } else if (kind == "at_least" && names.size() >= 2) {
+    const std::size_t n = count();
+    rule = rules::AtLeast(n, names);
+  } else if (kind == "at_most" && names.size() >= 2) {
+    const std::size_t n = count();
+    rule = rules::AtMost(n, names);
+  } else if (kind == "exactly_one_of")
+    rule = rules::ExactlyOneOf(names);
+  else if (kind == "at_least_one_of")
+    rule = rules::AtLeastOneOf(names);
+  else if (kind == "at_most_one_of")
+    rule = rules::AtMostOneOf(names);
+  else if (kind == "requires") {
+    std::string first = split();
+    rule = rules::Requires(first, names);
+  } else if (kind == "requires_any") {
+    std::string first = split();
+    rule = rules::RequiresAnyOf(first, names);
+  } else if (kind == "conflicts") {
+    std::string first = split();
+    rule = rules::Conflicts(first, names);
+  } else
+    return fail();
+  rule.when = condition;
+  return rule;
+}
+
 void DictionaryGrammar::ReadFromFile(std::string_view file_name) {
   file_name_ = std::filesystem::path(std::string(file_name));
   keywords_.clear();
   list_of_keywords_names_.clear();
+  user_rules_.clear();
+  rules_.clear();
   number_of_keywords_ = 0;
 
   std::ifstream fInput(file_name_);
@@ -130,37 +275,41 @@ void DictionaryGrammar::ReadFromFile(std::string_view file_name) {
                     "I/O error while reading the grammar file", {}, {}}},
         Context());
 
-  std::vector<std::size_t> line_keywords;
-  for (std::size_t i = 0; i < lines.size(); i++) {
+  std::size_t i = 0;
+  while (i < lines.size()) {
     const auto tokens = Lexer::split_whitespace_view(lines[i]);
-    if (!tokens.empty() && tokens.front() == "keyword:")
-      line_keywords.push_back(i);
-  }
-
-  keywords_.reserve(line_keywords.size());
-  for (const std::size_t first : line_keywords) {
-    if (first + 7 > lines.size())
-      ErrorMessage("A keyword block starting at line " +
-                   std::to_string(first + 1) +
+    if (tokens.empty()) {
+      ++i;
+      continue;
+    }
+    if (tokens.front() == "rule:") {
+      user_rules_.push_back(ParseRuleLine(lines[i]));
+      ++i;
+      continue;
+    }
+    if (tokens.front() != "keyword:") {
+      ++i; // free text, as in the original format
+      continue;
+    }
+    if (i + 7 > lines.size())
+      ErrorMessage("A keyword block starting at line " + std::to_string(i + 1) +
                    " is truncated. Each keyword definition must contain "
                    "seven lines.");
-    std::vector<std::string> block(lines.begin() + static_cast<std::ptrdiff_t>(first),
-                                   lines.begin() + static_cast<std::ptrdiff_t>(first + 7));
+    std::vector<std::string> block(
+        lines.begin() + static_cast<std::ptrdiff_t>(i),
+        lines.begin() + static_cast<std::ptrdiff_t>(i + 7));
     keywords_.emplace_back(block);
-    // Optional eighth line: "dimension: <SI unit> [difference]"
-    if (first + 7 < lines.size()) {
-      const auto tokens = Lexer::split_whitespace_view(lines[first + 7]);
-      if (!tokens.empty() && tokens.front() == "dimension:")
-        keywords_.back().SetDimensionFromLine(lines[first + 7]);
+    i += 7;
+    // Optional property lines: dimension:, default:, allowed_values:, ...
+    while (i < lines.size()) {
+      const std::string trimmed = Lexer::trim_copy(lines[i]);
+      if (trimmed.empty() || !keywords_.back().SetPropertyFromLine(trimmed))
+        break;
+      ++i;
     }
   }
 
-  number_of_keywords_ = static_cast<unsigned int>(keywords_.size());
-  list_of_keywords_names_.resize(number_of_keywords_);
-  for (unsigned int i = 0; i < number_of_keywords_; i++)
-    list_of_keywords_names_[i] = keywords_[i].name();
-
-  Check();
+  Finalize();
 }
 
 const DictionaryKeyWord *
@@ -171,6 +320,35 @@ DictionaryGrammar::FindKeyWord(std::string_view keyword_name) const noexcept {
   return nullptr;
 }
 
+void DictionaryGrammar::BuildRules() {
+  rules_.clear();
+  std::set<std::vector<std::string>> groups;
+  std::set<std::pair<std::string, std::string>> conflicts;
+  for (const auto &keyword : keywords_) {
+    if (keyword.is_compulsory() && keyword.compulsory_alternatives().empty())
+      rules_.push_back(rules::Required(keyword.name()));
+    if (keyword.is_compulsory() && !keyword.compulsory_alternatives().empty()) {
+      std::vector<std::string> group = keyword.compulsory_alternatives();
+      group.push_back(keyword.name());
+      std::sort(group.begin(), group.end());
+      if (groups.insert(group).second)
+        rules_.push_back(rules::ExactlyOneOf(group));
+    }
+    if (!keyword.required_keywords().empty())
+      rules_.push_back(
+          rules::Requires(keyword.name(), keyword.required_keywords()));
+    for (const auto &other : keyword.conflicting_keywords()) {
+      const auto pair = std::minmax(keyword.name(), other);
+      if (conflicts.emplace(pair.first, pair.second).second)
+        rules_.push_back(rules::Conflicts(pair.first, {pair.second}));
+    }
+  }
+  rules_.insert(rules_.end(), user_rules_.begin(), user_rules_.end());
+}
+
+// ---------------------------------------------------------------------------
+// Coherence analysis
+// ---------------------------------------------------------------------------
 void DictionaryGrammar::Check() {
   const std::size_t n = keywords_.size();
   std::vector<std::string> problems;
@@ -204,19 +382,13 @@ void DictionaryGrammar::Check() {
                          "'\"'");
     if (keyword_type_name(keywords_[i].type()) == "unknown")
       problems.push_back("the keyword " + name + " has an invalid type");
-    if (keywords_[i].dimension() && keywords_[i].type() != SINGLE_MEASURE &&
-        keywords_[i].type() != VECTOR_MEASURE)
-      problems.push_back("the keyword " + name + " declares a dimension (" +
-                         units::describe(*keywords_[i].dimension()) +
-                         "), but only single_measure and vector_measure "
-                         "keywords can have one");
     if (!index.emplace(name, i).second &&
         reported_duplicates.insert(name).second)
       problems.push_back("the keyword " + name + " is defined more than once");
   }
   fail_if_any();
 
-  // 2. References -------------------------------------------------------------
+  // 2. Legacy references ---------------------------------------------------
   const auto check_list = [&](const std::size_t i,
                               const std::vector<std::string> &list,
                               const char *label) {
@@ -248,9 +420,9 @@ void DictionaryGrammar::Check() {
                          "alternatives");
 
     for (const auto &required : k.required_keywords()) {
-      const auto &conflicts = k.conflicting_keywords();
-      if (std::find(conflicts.begin(), conflicts.end(), required) !=
-          conflicts.end())
+      const auto &conflicting = k.conflicting_keywords();
+      if (std::find(conflicting.begin(), conflicting.end(), required) !=
+          conflicting.end())
         problems.push_back("the keyword " + k.name() +
                            " both requires and conflicts with " + required);
       const auto &alternatives = k.compulsory_alternatives();
@@ -264,7 +436,7 @@ void DictionaryGrammar::Check() {
   }
   fail_if_any();
 
-  // 3. Alternative groups and conflict symmetry -------------------------------
+  // 3. Legacy alternative groups and conflict symmetry ------------------------
   const auto group_members = [&](const std::size_t i) {
     std::set<std::size_t> group{i};
     for (const auto &alternative : keywords_[i].compulsory_alternatives())
@@ -318,33 +490,238 @@ void DictionaryGrammar::Check() {
     }
   fail_if_any();
 
-  // 4. Satisfiability and dead keywords ---------------------------------------
-  std::vector<std::size_t> group_of(n, none);
-  std::vector<std::set<std::size_t>> groups;
-  for (std::size_t i = 0; i < n; ++i) {
-    const DictionaryKeyWord &k = keywords_[i];
-    if (!k.is_compulsory() || k.compulsory_alternatives().empty() ||
-        group_of[i] != none)
-      continue;
-    groups.push_back(group_members(i));
-    for (const std::size_t m : groups.back())
-      group_of[m] = groups.size() - 1;
-  }
-
-  std::vector<char> conflict(n * n, 0);
-  for (std::size_t i = 0; i < n; ++i)
-    for (const auto &conflicting : keywords_[i].conflicting_keywords()) {
-      const std::size_t j = index.at(conflicting);
-      conflict[i * n + j] = conflict[j * n + i] = 1;
+  // 4. Rules registered with AddRule ----------------------------------------
+  for (const auto &rule : user_rules_) {
+    const std::string what = "the rule '" + rule.describe() + "'";
+    std::set<std::string> seen;
+    for (const auto &keyword : rule.keywords) {
+      if (!index.contains(keyword))
+        problems.push_back(what + " refers to the undefined keyword " +
+                           keyword);
+      if (!seen.insert(keyword).second)
+        problems.push_back(what + " lists " + keyword + " more than once");
     }
+    const std::size_t size = rule.keywords.size();
+    switch (rule.kind) {
+    case Rule::Kind::Required:
+    case Rule::Kind::Forbidden:
+      if (size != 1)
+        problems.push_back(what + " must name exactly one keyword");
+      break;
+    case Rule::Kind::Exactly:
+    case Rule::Kind::AtLeast:
+      if (size < 2)
+        problems.push_back(what + " must name at least two keywords");
+      else if (rule.count < 1 || rule.count > size)
+        problems.push_back(what + " can never be satisfied: the count must "
+                                  "be between 1 and " +
+                           std::to_string(size));
+      break;
+    case Rule::Kind::AtMost:
+      if (size < 2)
+        problems.push_back(what + " must name at least two keywords");
+      else if (rule.count < 1 || rule.count >= size)
+        problems.push_back(what + " has no effect or forbids every keyword: "
+                                  "the count must be between 1 and " +
+                           std::to_string(size - 1));
+      break;
+    case Rule::Kind::Requires:
+    case Rule::Kind::RequiresAny:
+    case Rule::Kind::Conflicts:
+      if (size < 2)
+        problems.push_back(what + " must name a keyword and at least one "
+                                  "other keyword");
+      break;
+    }
+
+    const Condition &c = rule.when;
+    if (c.kind == Condition::Kind::Always)
+      continue;
+    const auto it = index.find(c.keyword);
+    if (it == index.end()) {
+      problems.push_back(what + " has a condition on the undefined keyword " +
+                         c.keyword);
+      continue;
+    }
+    const DictionaryKeyWord &tested = keywords_[it->second];
+    if (c.kind != Condition::Kind::Equals && c.kind != Condition::Kind::OneOf)
+      continue;
+    if (!is_single_token_type(tested.type())) {
+      problems.push_back(what + " compares the value of " + c.keyword +
+                         ", whose type (" + tested.type_ascii() +
+                         ") is not a single string, boolean, integer, "
+                         "character or dictionary name");
+      continue;
+    }
+    if (c.values.empty())
+      problems.push_back(what + " has a condition without values");
+    for (const auto &value : c.values) {
+      const auto issues = detail::validate_value(tested, {value}, units::si_kmol);
+      if (!issues.empty())
+        problems.push_back(what + " compares " + c.keyword + " with " +
+                           detail::quote(value) +
+                           ", which is not a valid value: " +
+                           issues.front().message);
+    }
+  }
+  fail_if_any();
+
+  BuildRules();
+
+  // 5. Keyword properties ------------------------------------------------------
+  std::unordered_set<std::string> required_by_rule;
+  for (const auto &rule : rules_)
+    if (rule.kind == Rule::Kind::Required &&
+        rule.when.kind == Condition::Kind::Always)
+      required_by_rule.insert(rule.keywords.front());
+
+  for (const auto &k : keywords_) {
+    const std::string &name = k.name();
+    const auto type = k.type();
+    if (k.dimension() && type != SINGLE_MEASURE && type != VECTOR_MEASURE)
+      problems.push_back("the keyword " + name + " declares a dimension (" +
+                         units::describe(*k.dimension()) +
+                         "), but only single_measure and vector_measure "
+                         "keywords can have one");
+    if (!k.allowed_values().empty()) {
+      if (type != SINGLE_STRING && type != VECTOR_STRING)
+        problems.push_back("the keyword " + name +
+                           " declares allowed values, but only single_string "
+                           "and vector_string keywords can have them");
+      std::set<std::string> seen;
+      for (const auto &value : k.allowed_values())
+        if (value.empty() || !seen.insert(value).second)
+          problems.push_back("the keyword " + name +
+                             " has an empty or repeated allowed value '" +
+                             value + "'");
+    }
+    if (k.minimum() || k.maximum()) {
+      if (!is_numeric_type(type))
+        problems.push_back("the keyword " + name +
+                           " declares a numeric range, but its type (" +
+                           k.type_ascii() + ") is not numeric");
+      else if ((type == SINGLE_MEASURE || type == VECTOR_MEASURE) &&
+               !k.dimension())
+        problems.push_back("the keyword " + name +
+                           " declares a numeric range for a measure, which "
+                           "requires a dimension (the range is in SI units)");
+      if (k.minimum() && k.maximum() &&
+          (k.minimum()->value > k.maximum()->value ||
+           (k.minimum()->value == k.maximum()->value &&
+            !(k.minimum()->inclusive && k.maximum()->inclusive))))
+        problems.push_back("the keyword " + name + " has an empty range: " +
+                           format_number(k.minimum()->value) + " to " +
+                           format_number(k.maximum()->value));
+    }
+    if (k.size_min() || k.size_max()) {
+      if (!is_list_type(type))
+        problems.push_back("the keyword " + name +
+                           " declares a list size, but its type (" +
+                           k.type_ascii() + ") is not a list");
+      if (k.size_min() && k.size_max() && *k.size_min() > *k.size_max())
+        problems.push_back("the keyword " + name +
+                           " has a minimum size larger than its maximum size");
+    }
+    if (k.sum()) {
+      if (type != VECTOR_DOUBLE && type != VECTOR_STRING_DOUBLE)
+        problems.push_back("the keyword " + name +
+                           " declares a sum, but only vector_double and "
+                           "vector_string_double keywords can have one");
+      if (k.sum()->second < 0.0)
+        problems.push_back("the keyword " + name +
+                           " has a negative sum tolerance");
+    }
+    if (k.default_value()) {
+      if (k.is_compulsory() || required_by_rule.contains(name)) {
+        problems.push_back("the keyword " + name +
+                           " is compulsory, so it cannot have a default value");
+      } else {
+        try {
+          std::vector<std::string> values;
+          for (const auto &token :
+               Lexer::tokenize(*k.default_value(), "default of " + name))
+            values.push_back(token.text);
+          const auto issues =
+              detail::validate_value(k, values, units::si_kmol);
+          for (const auto &issue : issues)
+            problems.push_back("the default value '" + *k.default_value() +
+                               "' of " + name + " is not valid: " +
+                               issue.message);
+        } catch (const DictionaryError &error) {
+          problems.push_back("the default value '" + *k.default_value() +
+                             "' of " + name + " cannot be parsed: " +
+                             error.diagnostics().front().message);
+        }
+      }
+    }
+  }
+  fail_if_any();
+
+  // 6. Satisfiability and dead keywords (unconditional rules) ------------------
+  std::vector<char> conflict(n * n, 0);
+  std::vector<std::vector<std::size_t>> requires_edges(n);
+  std::vector<char> mandatory(n, 0);
+  std::vector<std::string> forbidden(n);
+  std::vector<std::vector<std::size_t>> groups_of(n); // exactly-one groups
+  struct Counting {
+    const Rule *rule;
+    std::vector<std::size_t> members;
+  };
+  std::vector<Counting> counting;
+
+  const auto set_conflict = [&](const std::size_t a, const std::size_t b) {
+    conflict[a * n + b] = conflict[b * n + a] = 1;
+  };
+  std::size_t group_count = 0;
+  for (const auto &rule : rules_) {
+    if (rule.when.kind != Condition::Kind::Always)
+      continue;
+    std::vector<std::size_t> ids;
+    for (const auto &keyword : rule.keywords)
+      ids.push_back(index.at(keyword));
+    switch (rule.kind) {
+    case Rule::Kind::Required: mandatory[ids[0]] = 1; break;
+    case Rule::Kind::Forbidden:
+      forbidden[ids[0]] = "a rule forbids it";
+      break;
+    case Rule::Kind::Requires:
+      for (std::size_t k = 1; k < ids.size(); ++k)
+        requires_edges[ids[0]].push_back(ids[k]);
+      break;
+    case Rule::Kind::Conflicts:
+      for (std::size_t k = 1; k < ids.size(); ++k)
+        set_conflict(ids[0], ids[k]);
+      break;
+    case Rule::Kind::Exactly:
+    case Rule::Kind::AtLeast:
+    case Rule::Kind::AtMost:
+      if ((rule.kind == Rule::Kind::Exactly || rule.kind == Rule::Kind::AtMost) &&
+          rule.count == 1) {
+        for (std::size_t a = 0; a < ids.size(); ++a)
+          for (std::size_t b = a + 1; b < ids.size(); ++b)
+            set_conflict(ids[a], ids[b]);
+      }
+      if (rule.kind == Rule::Kind::Exactly && rule.count == 1) {
+        for (const std::size_t id : ids)
+          groups_of[id].push_back(group_count);
+        ++group_count;
+      }
+      counting.push_back({&rule, ids});
+      break;
+    case Rule::Kind::RequiresAny:
+      break;
+    }
+  }
   const auto conflicts = [&](const std::size_t a, const std::size_t b) {
     return conflict[a * n + b] != 0;
   };
-
-  std::vector<char> mandatory(n, 0);
-  for (std::size_t i = 0; i < n; ++i)
-    mandatory[i] = keywords_[i].is_compulsory() &&
-                   keywords_[i].compulsory_alternatives().empty();
+  const auto same_group = [&](const std::size_t a, const std::size_t b) {
+    for (const std::size_t g : groups_of[a])
+      if (std::find(groups_of[b].begin(), groups_of[b].end(), g) !=
+          groups_of[b].end())
+        return true;
+    return false;
+  };
 
   for (std::size_t a = 0; a < n; ++a)
     for (std::size_t b = a + 1; b < n; ++b)
@@ -355,7 +732,7 @@ void DictionaryGrammar::Check() {
                            "be satisfied");
   fail_if_any();
 
-  // Transitive closure of `required_keywords` (each closure contains itself).
+  // Transitive closure of the requirements (each closure contains itself).
   std::vector<std::vector<std::size_t>> closure(n);
   for (std::size_t i = 0; i < n; ++i) {
     std::vector<char> seen(n, 0);
@@ -365,13 +742,11 @@ void DictionaryGrammar::Check() {
       const std::size_t current = stack.back();
       stack.pop_back();
       closure[i].push_back(current);
-      for (const auto &required : keywords_[current].required_keywords()) {
-        const std::size_t next = index.at(required);
+      for (const std::size_t next : requires_edges[current])
         if (!seen[next]) {
           seen[next] = 1;
           stack.push_back(next);
         }
-      }
     }
     std::sort(closure[i].begin(), closure[i].end()); // deterministic messages
   }
@@ -390,19 +765,18 @@ void DictionaryGrammar::Check() {
   for (std::size_t i = 0; i < n; ++i) {
     const auto &set = closure[i];
     std::string reason;
+    for (const std::size_t a : set)
+      if (reason.empty() && !forbidden[a].empty())
+        reason = a == i ? std::string("a rule forbids it")
+                        : "it requires " + name_of(a) +
+                              ", which a rule forbids";
     for (std::size_t x = 0; x < set.size() && reason.empty(); ++x)
       for (std::size_t y = x + 1; y < set.size() && reason.empty(); ++y) {
         const std::size_t a = set[x];
         const std::size_t b = set[y];
         const bool involves_self = (a == i || b == i);
         const std::size_t other = (a == i) ? b : a;
-        if (conflicts(a, b))
-          reason = involves_self ? "it requires " + name_of(other) +
-                                       ", which conflicts with it"
-                                 : "it requires both " + name_of(a) + " and " +
-                                       name_of(b) +
-                                       ", which conflict with each other";
-        else if (group_of[a] != none && group_of[a] == group_of[b])
+        if (same_group(a, b))
           reason = involves_self
                        ? "it requires " + name_of(other) +
                              ", which is one of its mutually exclusive "
@@ -411,21 +785,27 @@ void DictionaryGrammar::Check() {
                              name_of(b) +
                              ", which are mutually exclusive compulsory "
                              "alternatives";
+        else if (conflicts(a, b))
+          reason = involves_self ? "it requires " + name_of(other) +
+                                       ", which conflicts with it"
+                                 : "it requires both " + name_of(a) + " and " +
+                                       name_of(b) +
+                                       ", which conflict with each other";
       }
     for (std::size_t x = 0; x < set.size() && reason.empty(); ++x) {
       const std::size_t a = set[x];
       for (std::size_t m = 0; m < n && reason.empty(); ++m) {
         if (!always[m] || m == a)
           continue;
-        if (conflicts(a, m))
-          reason = (a == i ? std::string("it") : "it requires " + name_of(a) +
-                                                     ", which") +
-                   " conflicts with " + name_of(m) +
-                   ", which is always required";
-        else if (group_of[a] != none && group_of[a] == group_of[m])
+        if (same_group(a, m))
           reason = (a == i ? std::string("it") : "it requires " + name_of(a) +
                                                      ", which") +
                    " is a mutually exclusive alternative of " + name_of(m) +
+                   ", which is always required";
+        else if (conflicts(a, m))
+          reason = (a == i ? std::string("it") : "it requires " + name_of(a) +
+                                                     ", which") +
+                   " conflicts with " + name_of(m) +
                    ", which is always required";
       }
     }
@@ -437,31 +817,57 @@ void DictionaryGrammar::Check() {
       problems.push_back("the grammar can never be satisfied: " + name_of(i) +
                          " is always required, but " + dead[i]);
 
-  std::vector<char> group_fully_dead(groups.size(), 0);
-  for (std::size_t g = 0; g < groups.size(); ++g) {
-    bool all_dead = true;
-    for (const std::size_t m : groups[g])
-      all_dead = all_dead && !dead[m].empty();
-    if (all_dead) {
-      group_fully_dead[g] = 1;
-      std::string detail;
-      for (const std::size_t m : groups[g])
-        detail += "; " + name_of(m) + ": " + dead[m];
-      problems.push_back("the grammar can never be satisfied: none of the "
-                         "compulsory alternatives " +
-                         group_names(groups[g]) + " can be used" + detail);
+  // Counting rules: enough usable members, not too many always present.
+  std::vector<char> covered(n, 0); // dead keys already explained by a group
+  for (const auto &group : counting) {
+    const Rule &rule = *group.rule;
+    std::size_t usable = 0;
+    std::size_t forced = 0;
+    std::vector<std::string> names;
+    for (const std::size_t m : group.members) {
+      usable += dead[m].empty() ? 1 : 0;
+      forced += always[m] ? 1 : 0;
+      names.push_back(name_of(m));
     }
+    const bool needs = rule.kind != Rule::Kind::AtMost;
+    if (needs && usable < rule.count) {
+      for (const std::size_t m : group.members)
+        covered[m] = 1;
+      if (rule.kind == Rule::Kind::Exactly && rule.count == 1 &&
+          usable == 0) {
+        std::string detail;
+        for (const std::size_t m : group.members)
+          detail += "; " + name_of(m) + ": " + dead[m];
+        problems.push_back("the grammar can never be satisfied: none of the "
+                           "compulsory alternatives {" +
+                           join(names) + "} can be used" + detail);
+      } else {
+        problems.push_back("the grammar can never be satisfied: the rule '" +
+                           rule.describe() + "' needs " +
+                           std::to_string(rule.count) +
+                           " keywords, but only " + std::to_string(usable) +
+                           " of them can be used");
+      }
+    }
+    if (rule.kind != Rule::Kind::AtLeast && forced > rule.count)
+      problems.push_back("the grammar can never be satisfied: the rule '" +
+                         rule.describe() + "' allows " +
+                         std::to_string(rule.count) + ", but " +
+                         std::to_string(forced) +
+                         " of its keywords are always required");
   }
 
   for (std::size_t i = 0; i < n; ++i)
-    if (!always[i] && !dead[i].empty() &&
-        (group_of[i] == none || !group_fully_dead[group_of[i]]))
+    if (!always[i] && !dead[i].empty() && !covered[i])
       problems.push_back("the keyword " + name_of(i) +
                          " can never be used: " + dead[i]);
 
   fail_if_any();
 }
 
+// ---------------------------------------------------------------------------
+// Documentation
+// ---------------------------------------------------------------------------
 void DictionaryGrammar::ShortSummary(std::ostream &fout) const {
   fout << "Grammar";
   if (!name_.empty())
@@ -492,7 +898,23 @@ DictionaryGrammar::AvailableKeyWordsTable(std::string_view dictionary_name,
     out << std::setw(20) << std::left << keyword.type_ascii();
     if (keyword.dimension())
       out << "[" << units::si_unit(*keyword.dimension(), system) << "] ";
-    out << std::left << keyword.comment_short() << '\n';
+    out << std::left << keyword.comment_short();
+    if (keyword.default_value())
+      out << " (default: " << *keyword.default_value() << ")";
+    if (!keyword.allowed_values().empty()) {
+      out << " (allowed:";
+      for (const auto &value : keyword.allowed_values())
+        out << ' ' << value;
+      out << ")";
+    }
+    if (keyword.deprecated())
+      out << " (deprecated)";
+    out << '\n';
+  }
+  if (!rules_.empty()) {
+    out << rule << '\n' << "Rules\n";
+    for (const auto &r : rules_)
+      out << "  - " << r.describe() << '\n';
   }
   out << rule << '\n';
   return out.str();
@@ -502,6 +924,84 @@ void DictionaryGrammar::ShowListAvailableKeywords(std::ostream &out) const {
   out << '\n' << AvailableKeyWordsTable() << '\n';
 }
 
+std::string DictionaryGrammar::Describe(std::string_view title) const {
+  const auto escape = [](std::string text) {
+    std::string result;
+    for (const char c : text) {
+      if (c == '|')
+        result += "\\|";
+      else
+        result += c;
+    }
+    return result;
+  };
+  std::unordered_map<std::string, std::string> required;
+  for (const auto &rule : rules_)
+    if (rule.kind == Rule::Kind::Required)
+      required[rule.keywords.front()] =
+          rule.when.kind == Condition::Kind::Always ? "yes"
+                                                    : rule.when.describe();
+
+  std::ostringstream out;
+  const std::string heading =
+      title.empty() ? (name_.empty() ? std::string("Grammar") : name_)
+                    : std::string(title);
+  out << "## " << heading << "\n\n";
+  out << "| Keyword | Type | Units (SI) | Default | Required | Constraints | "
+         "Description |\n";
+  out << "| --- | --- | --- | --- | --- | --- | --- |\n";
+  for (const auto &k : keywords_) {
+    std::vector<std::string> constraints;
+    if (!k.allowed_values().empty())
+      constraints.push_back("one of: " + join(k.allowed_values()));
+    if (k.minimum())
+      constraints.push_back(std::string(k.minimum()->inclusive ? "≥ " : "> ") +
+                            format_number(k.minimum()->value));
+    if (k.maximum())
+      constraints.push_back(std::string(k.maximum()->inclusive ? "≤ " : "< ") +
+                            format_number(k.maximum()->value));
+    if (k.size_min() || k.size_max()) {
+      const std::size_t lo = k.size_min().value_or(0);
+      const std::size_t hi = k.size_max().value_or(static_cast<std::size_t>(-1));
+      constraints.push_back(
+          lo == hi ? std::to_string(lo) + " elements"
+          : hi == static_cast<std::size_t>(-1)
+              ? "at least " + std::to_string(lo) + " elements"
+              : std::to_string(lo) + " to " + std::to_string(hi) + " elements");
+    }
+    if (k.sum())
+      constraints.push_back("sum = " + format_number(k.sum()->first));
+    if (k.deprecated())
+      constraints.push_back("deprecated" + (k.deprecated()->empty()
+                                                ? std::string()
+                                                : ": " + *k.deprecated()));
+    const auto it = required.find(k.name());
+    out << "| `" << k.name() << "` | " << k.type_ascii() << " | "
+        << (k.dimension() ? units::si_unit(*k.dimension()) : std::string())
+        << " | "
+        << (k.default_value() ? "`" + escape(*k.default_value()) + "`"
+                              : std::string())
+        << " | " << (it != required.end() ? escape(it->second) : std::string())
+        << " | " << escape(join(constraints)) << " | "
+        << escape(Lexer::trim_copy(k.comment_short())) << " |\n";
+  }
+  bool has_other_rules = false;
+  for (const auto &rule : rules_)
+    has_other_rules = has_other_rules || rule.kind != Rule::Kind::Required ||
+                      rule.when.kind != Condition::Kind::Always;
+  if (has_other_rules) {
+    out << "\n**Rules**\n\n";
+    for (const auto &rule : rules_)
+      if (rule.kind != Rule::Kind::Required ||
+          rule.when.kind != Condition::Kind::Always)
+        out << "- " << escape(rule.describe()) << "\n";
+  }
+  return out.str();
+}
+
+// ---------------------------------------------------------------------------
+// Validation of a dictionary
+// ---------------------------------------------------------------------------
 bool DictionaryGrammar::HasHelpKeyWord(
     const std::vector<std::string> &list_of_keywords) const {
   return std::find(list_of_keywords.begin(), list_of_keywords.end(),
@@ -529,117 +1029,176 @@ auto DictionaryGrammar::CollectUndefinedKeyWords(
   return violations;
 }
 
-auto DictionaryGrammar::CollectCompulsoryErrors(
-    const std::vector<std::string> &list_of_keywords) const
-    -> std::vector<Violation> {
-  std::vector<Violation> violations;
-  std::set<std::vector<std::string>> reported_groups;
-  const auto present = [&list_of_keywords](const std::string &name) {
-    return std::find(list_of_keywords.begin(), list_of_keywords.end(),
-                     name) != list_of_keywords.end();
+auto DictionaryGrammar::CollectRuleViolations(
+    const std::vector<std::string> &list_of_keywords,
+    const ValueLookup &value_of) const -> std::vector<Violation> {
+  const auto position = [&list_of_keywords](const std::string &name) {
+    const auto it =
+        std::find(list_of_keywords.begin(), list_of_keywords.end(), name);
+    return it == list_of_keywords.end()
+               ? none
+               : static_cast<std::size_t>(it - list_of_keywords.begin());
+  };
+  const auto present = [&](const std::string &name) {
+    return position(name) != none;
+  };
+  const auto value_matches = [&](const std::string &keyword,
+                                 const std::string &expected) {
+    const auto value = value_of(keyword);
+    if (!value)
+      return false;
+    const DictionaryKeyWord *declared = FindKeyWord(keyword);
+    if (declared != nullptr && declared->type() == SINGLE_BOOL) {
+      bool a = false;
+      bool b = false;
+      return detail::parse_bool_token(*value, a) &&
+             detail::parse_bool_token(expected, b) && a == b;
+    }
+    return *value == expected;
+  };
+  const auto holds = [&](const Condition &c) {
+    switch (c.kind) {
+    case Condition::Kind::Always: return true;
+    case Condition::Kind::Present: return present(c.keyword);
+    case Condition::Kind::Absent: return !present(c.keyword);
+    case Condition::Kind::Equals:
+      return !c.values.empty() && value_matches(c.keyword, c.values[0]);
+    case Condition::Kind::OneOf:
+      return std::any_of(c.values.begin(), c.values.end(),
+                         [&](const std::string &v) {
+                           return value_matches(c.keyword, v);
+                         });
+    }
+    return true;
   };
 
-  for (const auto &keyword : keywords_) {
-    if (!keyword.is_compulsory())
+  std::vector<Violation> violations;
+  for (const auto &rule : rules_) {
+    if (!holds(rule.when))
       continue;
-    if (keyword.compulsory_alternatives().empty()) {
-      if (!present(keyword.name()))
-        violations.push_back(Violation{
-            DiagnosticCode::MissingCompulsory,
-            "the compulsory keyword " + keyword.name() + " is missing",
-            {},
-            {},
-            {}});
-      continue;
-    }
+    const std::string condition = rule.when.describe();
+    const std::string suffix = condition.empty() ? "" : " (" + condition + ")";
+    const auto add = [&](DiagnosticCode code, std::string message,
+                         std::string keyword,
+                         std::vector<std::pair<std::string, std::string>>
+                             related = {}) {
+      if (!condition.empty() && present(rule.when.keyword))
+        related.emplace_back(rule.when.keyword,
+                             rule.when.keyword + " is specified here");
+      violations.push_back(Violation{code, std::move(message) + suffix,
+                                     std::move(keyword), {},
+                                     std::move(related)});
+    };
 
-    std::vector<std::string> group = keyword.compulsory_alternatives();
-    group.push_back(keyword.name());
-    std::sort(group.begin(), group.end());
-    if (!reported_groups.insert(group).second)
-      continue;
-
-    // Members found, in the order in which they appear in the dictionary.
+    // Members present, in file order.
     std::vector<std::string> found;
     for (const auto &name : list_of_keywords)
-      if (std::find(group.begin(), group.end(), name) != group.end())
+      if (std::find(rule.keywords.begin(), rule.keywords.end(), name) !=
+          rule.keywords.end())
         found.push_back(name);
+    const auto notes_for = [](const std::vector<std::string> &names,
+                              std::size_t count) {
+      std::vector<std::pair<std::string, std::string>> related;
+      for (std::size_t i = 0; i < count; ++i)
+        related.emplace_back(names[i], names[i] + " is specified here");
+      return related;
+    };
 
-    if (found.empty()) {
-      violations.push_back(Violation{DiagnosticCode::AlternativeGroup,
-                                     "one of the compulsory keywords " +
-                                         join(group) + " must be specified",
-                                     {},
-                                     {},
-                                     {}});
-    } else if (found.size() > 1) {
-      Violation violation;
-      violation.code = DiagnosticCode::AlternativeGroup;
-      violation.message = "only one of the mutually exclusive keywords " +
-                          join(group) + " can be specified, but " +
-                          join(found) + " are present";
-      violation.keyword = found.back();
-      for (std::size_t i = 0; i + 1 < found.size(); ++i)
-        violation.related.emplace_back(found[i], found[i] +
-                                                     " is specified here");
-      violations.push_back(std::move(violation));
+    const std::string &subject = rule.keywords.front();
+    switch (rule.kind) {
+    case Rule::Kind::Required:
+      if (!present(subject))
+        add(DiagnosticCode::MissingCompulsory,
+            "the compulsory keyword " + subject + " is missing", {});
+      break;
+    case Rule::Kind::Forbidden:
+      if (present(subject))
+        add(DiagnosticCode::Forbidden,
+            "the keyword " + subject + " cannot be used", subject);
+      break;
+    case Rule::Kind::Exactly:
+    case Rule::Kind::AtLeast:
+    case Rule::Kind::AtMost: {
+      const std::size_t k = found.size();
+      const bool too_few = rule.kind != Rule::Kind::AtMost && k < rule.count;
+      const bool too_many = rule.kind != Rule::Kind::AtLeast && k > rule.count;
+      if (!too_few && !too_many)
+        break;
+      const bool exactly_one =
+          rule.kind == Rule::Kind::Exactly && rule.count == 1;
+      if (exactly_one && too_few)
+        add(DiagnosticCode::AlternativeGroup,
+            "one of the compulsory keywords " + join(rule.keywords) +
+                " must be specified",
+            {});
+      else if (exactly_one)
+        add(DiagnosticCode::AlternativeGroup,
+            "only one of the mutually exclusive keywords " +
+                join(rule.keywords) + " can be specified, but " + join(found) +
+                " are present",
+            found.back(), notes_for(found, found.size() - 1));
+      else {
+        const std::string count_text =
+            (rule.kind == Rule::Kind::Exactly
+                 ? "exactly "
+                 : (rule.kind == Rule::Kind::AtLeast ? "at least "
+                                                     : "at most ")) +
+            (rule.count == 1 ? std::string("one")
+                             : std::to_string(rule.count)) +
+            " of " + join(rule.keywords);
+        const std::string verb = rule.kind == Rule::Kind::AtMost
+                                     ? " can be specified, but "
+                                     : " must be specified, but ";
+        const std::string found_text =
+            k == 0 ? std::string("none is present")
+                   : (k == 1 ? std::string("only 1 is present")
+                             : std::to_string(k) + " are present") +
+                         " (" + join(found) + ")";
+        if (too_few)
+          add(DiagnosticCode::Cardinality, count_text + verb + found_text, {});
+        else
+          add(DiagnosticCode::Cardinality, count_text + verb + found_text,
+              found.back(), notes_for(found, found.size() - 1));
+      }
+      break;
     }
-  }
-  return violations;
-}
-
-auto DictionaryGrammar::CollectRequiredErrors(
-    const std::vector<std::string> &list_of_keywords) const
-    -> std::vector<Violation> {
-  const std::unordered_set<std::string_view> present(list_of_keywords.begin(),
-                                                     list_of_keywords.end());
-  std::vector<Violation> violations;
-  for (const auto &keyword : keywords_) {
-    if (!present.contains(keyword.name()))
-      continue;
-    for (const auto &required : keyword.required_keywords())
-      if (!present.contains(required))
-        violations.push_back(Violation{DiagnosticCode::MissingRequired,
-                                       "the keyword " + keyword.name() +
-                                           " requires " + required +
-                                           ", which is missing",
-                                       keyword.name(),
-                                       {},
-                                       {}});
-  }
-  return violations;
-}
-
-auto DictionaryGrammar::CollectConflictErrors(
-    const std::vector<std::string> &list_of_keywords) const
-    -> std::vector<Violation> {
-  const auto position = [&list_of_keywords](const std::string &name) {
-    return std::find(list_of_keywords.begin(), list_of_keywords.end(), name) -
-           list_of_keywords.begin();
-  };
-  std::vector<Violation> violations;
-  std::set<std::pair<std::string, std::string>> reported;
-  for (const auto &keyword : keywords_) {
-    const auto first = position(keyword.name());
-    if (first == static_cast<std::ptrdiff_t>(list_of_keywords.size()))
-      continue;
-    for (const auto &conflicting : keyword.conflicting_keywords()) {
-      const auto second = position(conflicting);
-      if (second == static_cast<std::ptrdiff_t>(list_of_keywords.size()))
-        continue;
-      const auto pair = std::minmax(keyword.name(), conflicting);
-      if (!reported.emplace(pair.first, pair.second).second)
-        continue;
-      // Point at the keyword that appears last; the other one is a note.
-      const std::string &later = first > second ? keyword.name() : conflicting;
-      const std::string &earlier = first > second ? conflicting : keyword.name();
-      violations.push_back(Violation{
-          DiagnosticCode::Conflict,
-          "the keywords " + pair.first + " and " + pair.second +
-              " are mutually exclusive and cannot be used together",
-          later,
-          {},
-          {{earlier, earlier + " is specified here"}}});
+    case Rule::Kind::Requires:
+      if (present(subject))
+        for (std::size_t i = 1; i < rule.keywords.size(); ++i)
+          if (!present(rule.keywords[i]))
+            add(DiagnosticCode::MissingRequired,
+                "the keyword " + subject + " requires " + rule.keywords[i] +
+                    ", which is missing",
+                subject);
+      break;
+    case Rule::Kind::RequiresAny:
+      if (present(subject) &&
+          std::none_of(rule.keywords.begin() + 1, rule.keywords.end(),
+                       present)) {
+        std::vector<std::string> candidates(rule.keywords.begin() + 1,
+                                            rule.keywords.end());
+        add(DiagnosticCode::MissingRequired,
+            "the keyword " + subject + " requires one of " +
+                join(candidates) + ", but none is present",
+            subject);
+      }
+      break;
+    case Rule::Kind::Conflicts:
+      if (present(subject))
+        for (std::size_t i = 1; i < rule.keywords.size(); ++i) {
+          const std::string &other = rule.keywords[i];
+          if (!present(other))
+            continue;
+          const auto pair = std::minmax(subject, other);
+          const bool subject_later = position(subject) > position(other);
+          const std::string &later = subject_later ? subject : other;
+          const std::string &earlier = subject_later ? other : subject;
+          add(DiagnosticCode::Conflict,
+              "the keywords " + pair.first + " and " + pair.second +
+                  " are mutually exclusive and cannot be used together",
+              later, {{earlier, earlier + " is specified here"}});
+        }
+      break;
     }
   }
   return violations;

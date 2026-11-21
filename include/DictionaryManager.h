@@ -115,6 +115,24 @@ public:
   void SetUnitSystem(const units::UnitSystem &system);
 
   /**
+   * \brief Treats warnings as errors in all dictionaries (see
+   * `Dictionary::SetWarningsAsErrors`), including those loaded later.
+   *
+   * \param[in] value `true` to promote warnings to errors.
+   */
+  void SetWarningsAsErrors(bool value);
+
+  /**
+   * \brief Reports, for every dictionary with a grammar, the keywords written
+   * in the file but never read (see `Dictionary::CheckUnusedKeywords`).
+   *
+   * \return All warnings, dictionary by dictionary.
+   * \warning Throws `DictionaryError` if warnings are treated as errors and
+   * any keyword is unused.
+   */
+  std::vector<Diagnostic> CheckUnusedKeywords() const;
+
+  /**
    * \brief Returns the names of all loaded dictionaries, sorted.
    *
    * \return Dictionary names.
@@ -127,6 +145,9 @@ private:
 
   /** \brief Target unit system applied to every dictionary. */
   units::UnitSystem unit_system_{};
+
+  /** \brief Warning policy applied to every dictionary. */
+  bool warnings_as_errors_ = false;
 
   /** \brief Where each dictionary was defined. */
   std::map<std::string, SourceLocation, std::less<>> origins_;

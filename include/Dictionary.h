@@ -43,6 +43,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -88,6 +89,8 @@ public:
     unsigned int last_line = 0;
     /** \brief 1-based column of the keyword (0 if unknown). */
     unsigned int column = 0;
+    /** \brief `true` for a value supplied by the grammar default. */
+    bool from_default = false;
   };
 
   /**
@@ -342,6 +345,40 @@ public:
   void SetUnitSystem(const units::UnitSystem &system) noexcept {
     unit_system_ = system;
   }
+
+  /**
+   * \brief Returns the warnings of the last successful `SetGrammar` call
+   * (for example deprecated keywords).
+   */
+  [[nodiscard]] const std::vector<Diagnostic> &warnings() const noexcept {
+    return warnings_;
+  }
+
+  /**
+   * \brief Treats warnings as errors (`SetGrammar` and
+   * `CheckUnusedKeywords` then throw).
+   *
+   * \param[in] value `true` to promote warnings to errors.
+   */
+  void SetWarningsAsErrors(bool value) noexcept { warnings_as_errors_ = value; }
+
+  /**
+   * \brief Returns the keywords written in the file that have not been read
+   * by any `Read*` call since the grammar was attached, in file order.
+   */
+  [[nodiscard]] std::vector<std::string> UnusedKeywords() const;
+
+  /**
+   * \brief Reports keywords written in the file but never read.
+   *
+   * Call it after reading the dictionary: an unused keyword usually means
+   * that the calling code reads a different (misspelled) keyword.
+   *
+   * \return One warning per unused keyword (code `UnusedKeyword`).
+   * \warning Throws `DictionaryError` instead, with errors, if warnings are
+   * treated as errors.
+   */
+  std::vector<Diagnostic> CheckUnusedKeywords() const;
 
   /** \brief Returns the target unit system of the converting reads. */
   [[nodiscard]] const units::UnitSystem &unit_system() const noexcept {
@@ -626,6 +663,15 @@ private:
   /** \brief Target unit system of the converting reads. */
   units::UnitSystem unit_system_{};
 
+  /** \brief Keywords read since the grammar was attached. */
+  mutable std::set<std::string, std::less<>> used_;
+
+  /** \brief Warnings of the last successful validation. */
+  std::vector<Diagnostic> warnings_;
+
+  /** \brief Whether warnings are promoted to errors. */
+  bool warnings_as_errors_ = false;
+
 private:
   /**
    * \brief Validates this dictionary against the current grammar.
@@ -709,12 +755,11 @@ private:
                                       const units::Dimension *expected) const
       -> units::Dimension;
 
-  /**
-   * \brief Validates the units of measure keywords declaring a dimension.
-   *
-   * \return One diagnostic per invalid entry.
-   */
-  [[nodiscard]] auto CollectMeasureErrors() const -> std::vector<Diagnostic>;
+  /** \brief Removes the entries supplied by grammar defaults. */
+  void RemoveDefaultEntries();
+
+  /** \brief Adds entries for the grammar defaults of absent keywords. */
+  void AddDefaultEntries();
 
   /**
    * \brief Diagnoses a failed typed lookup without throwing.

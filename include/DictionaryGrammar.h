@@ -37,6 +37,8 @@
 #define OpenSMOKEpp_DictionaryGrammar_H
 
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <iosfwd>
 #include <iostream>
 #include <string>
@@ -46,17 +48,19 @@
 
 #include "DictionaryDiagnostics.h"
 #include "DictionaryKeyWord.h"
+#include "DictionaryRules.h"
 
 namespace OpenSMOKEpp {
 /**
  * \brief Defines valid keywords and consistency rules for a dictionary.
  *
- * A grammar owns a set of `DictionaryKeyWord` rules. When the grammar is
- * built (`DefineRules()` or `ReadFromFile`) its own coherence is verified;
+ * A grammar owns a set of `DictionaryKeyWord` declarations (type, units,
+ * default, constraints) and a set of structural `Rule`s (registered with
+ * `AddRule` or derived from the legacy per-keyword lists). When the grammar
+ * is built (`DefineRules()` or `ReadFromFile`) its own coherence is verified;
  * when it is attached to a dictionary, the dictionary is validated for
- * undefined keywords, compulsory keywords, required keyword dependencies and
- * conflicting keywords. All problems found are reported together in one
- * exception.
+ * undefined keywords, rule violations and invalid values. All problems found
+ * are reported together in one `DictionaryError`.
  *
  * Grammar coherence checks:
  * - keyword names start with `@`, are unique, and have a valid type;
@@ -127,6 +131,33 @@ public:
   FindKeyWord(std::string_view keyword_name) const noexcept;
 
   /**
+   * \brief Returns every rule of the grammar.
+   *
+   * Includes the rules registered with `AddRule` and those derived from
+   * the legacy keyword declarations (compulsory keywords, compulsory
+   * alternatives, required and conflicting keywords).
+   */
+  [[nodiscard]] const std::vector<Rule> &rules() const noexcept {
+    return rules_;
+  }
+
+  /**
+   * \brief Returns the keyword rules.
+   */
+  [[nodiscard]] const std::vector<DictionaryKeyWord> &keywords() const noexcept {
+    return keywords_;
+  }
+
+  /**
+   * \brief Documents the grammar in Markdown: a table of keywords (type,
+   * units, default, constraints, description) followed by the rules.
+   *
+   * \param[in] title Heading; the grammar name is used when empty.
+   * \return Markdown text.
+   */
+  [[nodiscard]] std::string Describe(std::string_view title = {}) const;
+
+  /**
    * \brief Returns the grammar name used in diagnostics.
    *
    * \return Grammar name (the name of the dictionary it was attached to, if
@@ -179,26 +210,36 @@ private:
   [[nodiscard]] std::vector<Violation>
   CollectUndefinedKeyWords(const std::vector<std::string> &list_of_keywords) const;
 
+  /** \brief Rules registered with `AddRule`. */
+  std::vector<Rule> user_rules_;
+
+  /** \brief All rules (derived from legacy declarations + `user_rules_`). */
+  std::vector<Rule> rules_;
+
+  /** \brief Function returning the effective single value of a keyword. */
+  using ValueLookup =
+      std::function<std::optional<std::string>(std::string_view)>;
+
   /**
-   * \brief Lists violations of compulsory keyword rules.
+   * \brief Evaluates every rule on a dictionary.
    *
-   * \return One message per missing compulsory keyword and per alternative
-   * group with zero or more than one member present.
+   * \param[in] list_of_keywords Keywords written in the file, in order.
+   * \param[in] value_of Effective value of a single-token keyword (file
+   * value or default), used by conditions.
+   * \return One violation per broken rule.
    */
   [[nodiscard]] std::vector<Violation>
-  CollectCompulsoryErrors(const std::vector<std::string> &list_of_keywords) const;
+  CollectRuleViolations(const std::vector<std::string> &list_of_keywords,
+                        const ValueLookup &value_of) const;
 
-  /**
-   * \brief Lists missing required companion keywords.
-   */
-  [[nodiscard]] std::vector<Violation>
-  CollectRequiredErrors(const std::vector<std::string> &list_of_keywords) const;
+  /** \brief Translates legacy declarations into rules (into `rules_`). */
+  void BuildRules();
 
-  /**
-   * \brief Lists pairs of mutually exclusive keywords used together.
-   */
-  [[nodiscard]] std::vector<Violation>
-  CollectConflictErrors(const std::vector<std::string> &list_of_keywords) const;
+  /** \brief Common final step of `UserDefined` and `ReadFromFile`. */
+  void Finalize();
+
+  /** \brief Parses a `rule:` line of a grammar file. */
+  [[nodiscard]] auto ParseRuleLine(const std::string &line) const -> Rule;
 
 protected:
   /**
@@ -233,6 +274,20 @@ protected:
    * \note Derived grammar classes call this inside `DefineRules()`.
    */
   void AddKeyWord(const DictionaryKeyWord &keyword);
+
+  /**
+   * \brief Adds a structural rule (see `OpenSMOKEpp::rules`).
+   *
+   * \code
+   * AddRule(rules::Exactly(2, {"@Temperature", "@Pressure", "@Density"}));
+   * AddRule(rules::When(rules::Equals("@Type", "UserDefinedVolume"),
+   *                     rules::Required("@VolumeProfile")));
+   * \endcode
+   *
+   * \param[in] rule Rule to add.
+   * \note Derived grammar classes call this inside `DefineRules()`.
+   */
+  void AddRule(Rule rule);
 
   /**
    * \brief Defines hard-coded keyword rules in derived grammar classes.

@@ -170,7 +170,7 @@ TEST_CASE("diagnostics", "include errors have their own code") {
   CHECK(error.diagnostics().front().location.line == 1);
 }
 
-TEST_CASE("diagnostics", "read errors point at the offending token") {
+TEST_CASE("diagnostics", "value errors point at the offending token") {
   auto manager = parse("Dictionary d\n"
                        "{\n"
                        "  @Values  1 2 x 4;\n"
@@ -178,18 +178,24 @@ TEST_CASE("diagnostics", "read errors point at the offending token") {
                        "  @Pairs   1 m 2 Kg;\n"
                        "}\n");
   auto &d = manager("d");
-  attach(d, {kw("@Values", VECTOR_DOUBLE), kw("@Times", VECTOR_MEASURE),
-             kw("@Pairs", VECTOR_MEASURE)});
-  std::vector<double> values;
 
-  auto error = catch_error([&] { d.ReadOption("@Values", values); });
-  CHECK(error.diagnostics().front().code == DiagnosticCode::InvalidValue);
-  CHECK(error.diagnostics().front().location.line == 3);
-  CHECK(error.diagnostics().front().location.column == 16);
-  CHECK(std::string(error.what()).find("      |                ^") !=
+  // Found when the grammar is attached.
+  const auto attached = catch_error([&] {
+    attach(d, {kw("@Values", VECTOR_DOUBLE), kw("@Times", VECTOR_MEASURE),
+               kw("@Pairs", VECTOR_MEASURE)});
+  });
+  REQUIRE(attached.diagnostics().size() == 1);
+  CHECK(attached.diagnostics().front().code == DiagnosticCode::InvalidValue);
+  CHECK(attached.diagnostics().front().location.line == 3);
+  CHECK(attached.diagnostics().front().location.column == 16);
+  CHECK(std::string(attached.what()).find("      |                ^") !=
         std::string::npos);
 
-  error = catch_error(
+  // Found when reading with an explicit dimension (not declared in the grammar).
+  attach(d, {kw("@Values", VECTOR_STRING), kw("@Times", VECTOR_MEASURE),
+             kw("@Pairs", VECTOR_MEASURE)});
+  std::vector<double> values;
+  auto error = catch_error(
       [&] { d.ReadMeasures("@Times", values, units::dim::Time); });
   CHECK(error.diagnostics().front().code == DiagnosticCode::InvalidUnit);
   CHECK(error.diagnostics().front().location.column == 18);
@@ -250,9 +256,7 @@ TEST_CASE("diagnostics", "dictionaries built without a source still name the lin
   d.SetName("legacy");
   d.SetFileName("old.dic");
   d.SetDictionary({"@N"}, {"abc"}, {12}, {12});
-  attach(d, {kw("@N", SINGLE_INT)});
-  int n = 0;
-  CHECK_THROWS_WITH(d.ReadInt("@N", n),
-                    "old.dic:12: error: keyword @N: an integer is required, "
-                    "but 'abc' was given");
+  CHECK_THROWS_WITH(attach(d, {kw("@N", SINGLE_INT)}),
+                    "old.dic:12: error: keyword @N: the value must be an "
+                    "integer, but 'abc' was given");
 }

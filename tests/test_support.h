@@ -40,6 +40,7 @@
 #include "DictionaryGrammar.h"
 #include "DictionaryKeyWord.h"
 #include "DictionaryManager.h"
+#include "DictionaryRules.h"
 
 #include <atomic>
 #include <chrono>
@@ -66,6 +67,34 @@ protected:
 private:
   std::vector<OpenSMOKEpp::DictionaryKeyWord> rules_;
 };
+
+// Grammar built from keyword rules and structural rules.
+class RuleGrammar : public OpenSMOKEpp::DictionaryGrammar {
+public:
+  RuleGrammar(std::vector<OpenSMOKEpp::DictionaryKeyWord> keywords,
+              std::vector<OpenSMOKEpp::Rule> rules)
+      : keywords_list_(std::move(keywords)), rules_list_(std::move(rules)) {}
+
+protected:
+  void DefineRules() override {
+    for (const auto &keyword : keywords_list_)
+      AddKeyWord(keyword);
+    for (const auto &rule : rules_list_)
+      AddRule(rule);
+  }
+
+private:
+  std::vector<OpenSMOKEpp::DictionaryKeyWord> keywords_list_;
+  std::vector<OpenSMOKEpp::Rule> rules_list_;
+};
+
+// Builds a grammar with rules and validates the dictionary against it.
+inline void attach(OpenSMOKEpp::Dictionary &dictionary,
+                   std::vector<OpenSMOKEpp::DictionaryKeyWord> keywords,
+                   std::vector<OpenSMOKEpp::Rule> rules) {
+  RuleGrammar grammar(std::move(keywords), std::move(rules));
+  dictionary.SetGrammar(grammar);
+}
 
 // Shorthand constructors for keyword rules.
 inline auto kw(const std::string &name, OpenSMOKEpp::DictionaryKeyWordTypes type,

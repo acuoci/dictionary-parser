@@ -282,6 +282,76 @@ void DictionaryKeyWord::SetDimensionFromLine(const std::string &line) {
   }
 }
 
+bool DictionaryKeyWord::SetPropertyFromLine(const std::string &line) {
+  const auto tokens = Lexer::split_whitespace_view(line);
+  if (tokens.empty())
+    return false;
+  const std::string_view key = tokens[0];
+  const auto rest = [&line, &key]() {
+    return Lexer::trim_copy(std::string_view(line).substr(
+        line.find(key) + key.size()));
+  };
+  const auto number = [this](std::string_view text, const char *what) {
+    try {
+      std::size_t used = 0;
+      const std::string copy(text);
+      const double value = std::stod(copy, &used);
+      if (used != copy.size())
+        throw std::invalid_argument("trailing characters");
+      return value;
+    } catch (const std::exception &) {
+      ErrorMessage(std::string("The keyword ") + what + " is not a number: '" +
+                   std::string(text) + "'.");
+    }
+  };
+  const auto count = [this](std::string_view text) {
+    std::size_t value = 0;
+    for (const char c : text) {
+      if (c < '0' || c > '9')
+        ErrorMessage("The keyword size is not a non-negative integer: '" +
+                     std::string(text) + "'.");
+      value = value * 10 + static_cast<std::size_t>(c - '0');
+    }
+    return value;
+  };
+
+  if (key == "dimension:") {
+    SetDimensionFromLine(line);
+  } else if (key == "default:") {
+    if (tokens.size() < 2)
+      ErrorMessage("The keyword default value is empty.");
+    default_value_ = rest();
+  } else if (key == "allowed_values:") {
+    if (tokens.size() < 2)
+      ErrorMessage("The keyword allowed_values list is empty.");
+    allowed_values_.assign(tokens.begin() + 1, tokens.end());
+  } else if (key == "minimum:" || key == "maximum:") {
+    if (tokens.size() < 2 || tokens.size() > 3 ||
+        (tokens.size() == 3 && tokens[2] != "exclusive"))
+      ErrorMessage("Expected '" + std::string(key) + " <value> [exclusive]'.");
+    const Bound bound{number(tokens[1], key == "minimum:" ? "minimum"
+                                                          : "maximum"),
+                      tokens.size() == 2};
+    (key == "minimum:" ? minimum_ : maximum_) = bound;
+  } else if (key == "size:") {
+    if (tokens.size() < 2 || tokens.size() > 3)
+      ErrorMessage("Expected 'size: <n>' or 'size: <min> <max>'.");
+    size_min_ = count(tokens[1]);
+    size_max_ = tokens.size() == 3 ? count(tokens[2]) : *size_min_;
+  } else if (key == "sum:") {
+    if (tokens.size() < 2 || tokens.size() > 3)
+      ErrorMessage("Expected 'sum: <target> [<tolerance>]'.");
+    sum_ = std::pair<double, double>{
+        number(tokens[1], "sum"),
+        tokens.size() == 3 ? number(tokens[2], "sum tolerance") : 1e-6};
+  } else if (key == "deprecated:") {
+    deprecated_ = rest();
+  } else {
+    return false;
+  }
+  return true;
+}
+
 void DictionaryKeyWord::ShortSummary(std::ostream &fout) const {
   fout << name_ << " (" << type_ascii_;
   if (dimension_)

@@ -142,6 +142,12 @@ auto to_string(const DiagnosticCode code) noexcept -> std::string_view {
   case DiagnosticCode::MissingKeyword: return "missing-keyword";
   case DiagnosticCode::WrongDimension: return "wrong-dimension";
   case DiagnosticCode::GrammarIncoherent: return "grammar-incoherent";
+  case DiagnosticCode::Cardinality: return "cardinality";
+  case DiagnosticCode::Forbidden: return "forbidden";
+  case DiagnosticCode::NotAllowed: return "not-allowed";
+  case DiagnosticCode::OutOfRange: return "out-of-range";
+  case DiagnosticCode::Deprecated: return "deprecated";
+  case DiagnosticCode::UnusedKeyword: return "unused-keyword";
   case DiagnosticCode::Other: return "other";
   }
   return "other";

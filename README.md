@@ -14,7 +14,7 @@ OpenSMOKE++ Dictionary Parser provides a compact parser for `Dictionary ... { ..
 | Parsing model | Dictionary blocks, `@Keyword` entries, semicolon terminators, multiline values |
 | Syntax | Inline dictionaries, `#include`, quoted strings, flexible brace placement |
 | Units | Dimensions declared in the grammar; units in the input checked and converted to SI automatically |
-| Validation | Grammar layer for required keywords, conflicts, alternatives, and typed reads, with a coherence analysis of the grammar itself |
+| Validation | Grammar rules (counting, requirements, conflicts, conditional rules), defaults, allowed values, ranges, sizes and sums; every value checked at load time; coherence analysis of the grammar itself |
 | Error handling | `DictionaryError` with structured diagnostics; all problems reported together, compiler-style messages with source excerpts, "did you mean" suggestions; nothing printed by the library |
 | Tests | Unit tests, integration tests over `examples/`, optional corpus test |
 | Documentation | Public headers documented with Doxygen comments |
@@ -166,20 +166,140 @@ try {
 - `Dictionary::entries()` gives the parsed entries (keyword, values, token
   positions) and `location_of(keyword)` the position of a keyword.
 
+## Grammar Rules and Keyword Properties
+
+### Rules
+
+Besides the per-keyword lists of the original format (compulsory
+alternatives, required keywords, conflicting keywords), a grammar can declare
+structural rules with `AddRule` and the factory functions of
+`OpenSMOKEpp::rules` (`DictionaryRules.h`):
+
+```cpp
+void DefineRules() override
+{
+    AddKeyWord(DictionaryKeyWord("@Type", SINGLE_STRING, "Reactor type", false)
+                   .SetAllowedValues({"Isothermal", "UserDefinedVolume"})
+                   .SetDefault("Isothermal"));
+    // ... other keywords ...
+
+    AddRule(rules::Exactly(2, {"@Temperature", "@Pressure", "@Density"}));
+    AddRule(rules::ExactlyOneOf({"@MoleFractions", "@MassFractions", "@Moles"}));
+    AddRule(rules::Conflicts("@Lean", {"@Rich"}));        // symmetric
+    AddRule(rules::RequiresAnyOf("@Fuel", {"@Oxidizer", "@Air"}));
+    AddRule(rules::When(rules::Equals("@Type", "UserDefinedVolume"),
+                        rules::Required("@VolumeProfile")));
+}
+```
+
+| Rule | Meaning |
+| --- | --- |
+| `Required(k)` / `Forbidden(k)` | `k` must be present / absent |
+| `Exactly(n, ks)`, `AtLeast(n, ks)`, `AtMost(n, ks)` | counting rules on a group |
+| `ExactlyOneOf`, `AtLeastOneOf`, `AtMostOneOf` | the same with `n = 1` |
+| `Requires(k, ks)` | if `k` is present, all of `ks` must be |
+| `RequiresAnyOf(k, ks)` | if `k` is present, at least one of `ks` must be |
+| `Conflicts(k, ks)` | `k` cannot be used with any of `ks` (declared once) |
+| `When(condition, rule)` | the rule applies only if the condition holds |
+
+Conditions: `Present(k)`, `Absent(k)`, `Equals(k, value)`, `OneOf(k, values)`.
+`Equals` and `OneOf` use the effective value of a single-token keyword (the
+file value or its default); booleans are compared by value (`on` = `true`).
+The legacy declarations are translated into the same rules
+(`grammar.rules()` lists them all), so old and new grammars behave alike.
+
+### Keyword Properties
+
+Chainable setters on `DictionaryKeyWord` (next to `SetDimension`):
+
+| Setter | Applies to | Effect |
+| --- | --- | --- |
+| `SetDefault("1800 kg/m3")` | any non-compulsory keyword | value returned by `Read*` when the keyword is absent (`CheckOption` still reports only the file) |
+| `SetAllowedValues({"A", "B"})` | `single_string`, `vector_string` | other values are rejected, with a suggestion |
+| `SetMinimum(x, inclusive)`, `SetMaximum(x, inclusive)` | integers, doubles, measures (in SI, dimension required), numbers of pair lists | bounds |
+| `SetSize(n)`, `SetSize(min, max)` | lists (pairs count as one element) | number of elements |
+| `SetSum(1.0, 1e-6)` | `vector_double`, `vector_string_double` | required sum (e.g. fractions) |
+| `SetDeprecated("use @New")` | any | using the keyword produces a warning |
+
+**All values are validated when the grammar is attached**: type, number of
+values, units, allowed values, ranges, sizes and sums of every keyword written
+in the file, reported together with the rule violations:
+
+```text
+flame.dic:7:22: error: keyword @PlanckCoefficient: 'Smoke' is not an allowed value (allowed: Smooke, Kent, Sazhin, none)
+    7 |   @PlanckCoefficient Smoke;
+      |                      ^~~~~
+      = hint: did you mean 'Smooke'?
+flame.dic:9:16: error: keyword @Temperature: the value 5 C (= 278.15 K) must be >= 300 K
+```
+
+### Warnings and Unused Keywords
+
+- Warnings (deprecated keywords) do not stop the program: they are available
+  in `dictionary.warnings()` after `SetGrammar`.
+- `dictionary.CheckUnusedKeywords()` (or `manager.CheckUnusedKeywords()` for
+  all dictionaries), called after reading, returns a warning for each keyword
+  written in the file but never read by a `Read*` call: typically the calling
+  code reads a misspelled keyword. `UnusedKeywords()` returns just the names.
+- `SetWarningsAsErrors(true)` on a dictionary or on the manager turns
+  warnings into errors (`SetGrammar` and `CheckUnusedKeywords` then throw).
+
+### Documentation
+
+`grammar.Describe("Title")` returns a Markdown table of the keywords (type, SI
+units, default, required, constraints, description) followed by the rules.
+The `@Help` table also shows defaults, allowed values and rules.
+
+### Grammar Files
+
+The seven-line keyword blocks may be followed by optional property lines, and
+rules can be written anywhere with `rule:` lines:
+
+```text
+keyword: @Type
+type: single_string
+short_comment: Reactor type
+is_compulsory: false
+compulsory_alternatives: none
+required_keywords: none
+conflicting_keywords: none
+allowed_values: Isothermal UserDefinedVolume
+default: Isothermal
+
+rule: exactly 2 @Temperature @Pressure @Density
+rule: required @VolumeProfile when @Type = UserDefinedVolume
+rule: conflicts @Lean @Rich
+```
+
+Property lines: `dimension:`, `default:`, `allowed_values:`, `minimum: <x>
+[exclusive]`, `maximum: <x> [exclusive]`, `size: <n> [<max>]`,
+`sum: <target> [<tolerance>]`, `deprecated: <message>`. Rule kinds:
+`required`, `forbidden`, `exactly N`, `at_least N`, `at_most N`,
+`exactly_one_of`, `at_least_one_of`, `at_most_one_of`, `requires`,
+`requires_any`, `conflicts`; conditions: `when K present`, `when K absent`,
+`when K = V`, `when K in V1 V2 ...`.
+
 ### Grammar Coherence
 
 When a grammar is built, its rules are checked before any dictionary is
 validated. The grammar is rejected (with every problem listed) if, for example:
 
 - a keyword name does not start with `@` or is defined twice;
-- a rule references an undefined keyword or the keyword itself;
+- a rule references an undefined keyword or the keyword itself, has an
+  impossible count, or has a condition on an undefined or multi-token keyword
+  or with a value that is not valid for that keyword;
 - a keyword both requires and conflicts with another keyword;
-- compulsory alternatives do not form a closed group, or a conflict is not
-  declared on both keywords;
-- following `required_keywords` transitively, a keyword would force two
-  conflicting keywords, or two members of the same alternative group, so it
-  can never be used;
-- no input could ever satisfy the grammar.
+- legacy compulsory alternatives do not form a closed group, or a legacy
+  conflict is not declared on both keywords;
+- a property does not fit the keyword type (allowed values on a number, a
+  range on a string or on a measure without dimension, an empty range, a size
+  on a scalar), or a default is invalid or set on a compulsory keyword;
+- following the requirements transitively, a keyword would force two
+  conflicting keywords, two members of the same exactly-one group, or a
+  forbidden keyword, so it can never be used;
+- no input could ever satisfy the grammar (an always-required keyword that
+  can never be used, a counting rule without enough usable keywords, or with
+  more always-required keywords than it allows).
 
 ## Units of Measure
 
@@ -335,8 +455,8 @@ ctest --output-on-failure
 ```
 
 - `Unit_*`: lexer, syntax, `#include`, typed reads, grammar coherence,
-  dictionary validation, units, measures and diagnostics
-  (`unit_tests [suite...]` runs selected suites).
+  dictionary validation, units, measures, diagnostics, rules and keyword
+  semantics (`unit_tests [suite...]` runs selected suites).
 - `Test_Example_*`: parse the input files in `examples/`, including a
   grammar-aware test for `input3.dic`.
 - `Test_Corpus`: parses every `*.dic` file below `DICTIONARY_PARSER_CORPUS_DIR`
@@ -369,7 +489,8 @@ Then include public headers:
 | `DictionaryManager.h` | Reads files or strings (with includes) and owns parsed dictionaries |
 | `Dictionary.h` | Provides keyword lookup, grammar validation, and typed reads |
 | `DictionaryGrammar.h` | Base class for user-defined grammar rules and coherence checks |
-| `DictionaryKeyWord.h` | Keyword metadata, expected value types and dimensions |
+| `DictionaryKeyWord.h` | Keyword metadata, value types, dimensions, defaults and constraints |
+| `DictionaryRules.h` | Structural rules and conditions (`rules::Exactly`, `rules::When`, ...) |
 | `DictionaryUnits.h` | Dimensions, unit parsing and conversion to SI |
 | `DictionaryInputFile.h` | Preprocessed input-file representation |
 | `DictionaryDiagnostics.h` | `Diagnostic`, `DictionaryError`, source locations and rendering |

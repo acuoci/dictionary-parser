@@ -36,6 +36,7 @@
 #include "Dictionary.h"
 #include "DictionaryLexer.h"
 #include "DictionaryUnits.h"
+#include "DictionaryValues.h"
 
 #include <algorithm>
 #include <charconv>
@@ -51,21 +52,6 @@ namespace OpenSMOKEpp {
 namespace {
 constexpr std::size_t npos_index = static_cast<std::size_t>(-1);
 
-template <typename Number>
-[[nodiscard]] auto parse_number(const std::string_view token,
-                                Number &value) noexcept -> bool {
-  const auto *begin = token.data();
-  const auto *end = token.data() + token.size();
-  const auto [ptr, ec] = std::from_chars(begin, end, value);
-  if (ec != std::errc{} || ptr != end)
-    return false;
-
-  if constexpr (std::is_floating_point_v<Number>)
-    return std::isfinite(value);
-  else
-    return true;
-}
-
 [[nodiscard]] auto parse_char_token(const std::string_view token,
                                     char &value) noexcept -> bool {
   if (token.size() != 1)
@@ -74,87 +60,11 @@ template <typename Number>
   return true;
 }
 
-[[nodiscard]] auto equals_ignore_case(const std::string_view lhs,
-                                      const std::string_view rhs) noexcept
-    -> bool {
-  if (lhs.size() != rhs.size())
-    return false;
-  for (std::size_t i = 0; i < lhs.size(); ++i) {
-    const auto lower = [](const char c) {
-      return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-    };
-    if (lower(lhs[i]) != lower(rhs[i]))
-      return false;
-  }
-  return true;
-}
-
-[[nodiscard]] auto parse_bool_token(const std::string_view token,
-                                    bool &value) noexcept -> bool {
-  if (equals_ignore_case(token, "true") || equals_ignore_case(token, "on")) {
-    value = true;
-    return true;
-  }
-  if (equals_ignore_case(token, "false") || equals_ignore_case(token, "off")) {
-    value = false;
-    return true;
-  }
-  return false;
-}
-
-[[nodiscard]] auto quote(const std::string_view token) -> std::string {
-  return "'" + std::string(token) + "'";
-}
-
-[[nodiscard]] auto is_number(const std::string_view token) noexcept -> bool {
-  double value = 0.0;
-  return parse_number(token, value);
-}
-
-// Splits the tokens of a list of measures. Two layouts are accepted:
-// pairs "1 m 20 cm" or numbers followed by one shared unit "1 2 3 m".
-[[nodiscard]] auto split_measures(const std::vector<std::string> &tokens,
-                                  std::vector<double> &values,
-                                  std::vector<std::string> &units)
-    -> std::optional<std::string> {
-  const std::size_t n = tokens.size();
-  values.clear();
-  units.clear();
-  const char *layout = "pairs of a number and units (e.g. '1 m 20 cm') or "
-                       "numbers followed by one unit (e.g. '1000 1100 K') are "
-                       "required";
-  if (n < 2)
-    return std::string(layout) + ", but " + std::to_string(n) +
-           " value(s) were given";
-
-  bool shared = !is_number(tokens.back());
-  for (std::size_t i = 0; i + 1 < n && shared; ++i)
-    shared = is_number(tokens[i]);
-  if (shared) {
-    values.resize(n - 1);
-    for (std::size_t i = 0; i + 1 < n; ++i)
-      (void)parse_number(tokens[i], values[i]);
-    units.assign(n - 1, tokens.back());
-    return std::nullopt;
-  }
-
-  if (n % 2 != 0)
-    return std::string(layout) + ", but " + std::to_string(n) +
-           " values were given";
-  values.resize(n / 2);
-  units.resize(n / 2);
-  for (std::size_t i = 0; i < n; i += 2) {
-    if (!parse_number(tokens[i], values[i / 2]))
-      return "measure " + std::to_string(i / 2 + 1) +
-             " must start with a finite number, but " + quote(tokens[i]) +
-             " was given";
-    if (is_number(tokens[i + 1]))
-      return "measure " + std::to_string(i / 2 + 1) +
-             " has no units: " + std::string(layout);
-    units[i / 2] = tokens[i + 1];
-  }
-  return std::nullopt;
-}
+using detail::is_number;
+using detail::parse_bool_token;
+using detail::parse_number;
+using detail::quote;
+using detail::split_measures;
 } // namespace
 
 auto Dictionary::Context() const -> std::string {
@@ -173,7 +83,7 @@ void Dictionary::ErrorMessage(std::string_view message,
 auto Dictionary::IndexOf(std::string_view name_of_keyword) const noexcept
     -> std::size_t {
   for (std::size_t i = 0; i < entries_.size(); ++i)
-    if (entries_[i].keyword == name_of_keyword)
+    if (!entries_[i].from_default && entries_[i].keyword == name_of_keyword)
       return i;
   return npos_index;
 }
@@ -318,17 +228,61 @@ void Dictionary::Checks() {
     }
   };
 
+  // Effective single value of a keyword: file value, or grammar default.
+  const auto value_of =
+      [this](std::string_view keyword) -> std::optional<std::string> {
+    const std::size_t index = IndexOf(keyword);
+    if (index != npos_index)
+      return entries_[index].values.size() == 1
+                 ? std::optional<std::string>(entries_[index].values[0])
+                 : std::nullopt;
+    const DictionaryKeyWord *declared = grammar_.FindKeyWord(keyword);
+    if (declared == nullptr || !declared->default_value())
+      return std::nullopt;
+    const auto tokens = Lexer::tokenize(*declared->default_value(), "default");
+    return tokens.size() == 1 ? std::optional<std::string>(tokens[0].text)
+                              : std::nullopt;
+  };
+
   const auto undefined = grammar_.CollectUndefinedKeyWords(keywords);
   const bool has_undefined = !undefined.empty();
   convert(undefined);
-  convert(grammar_.CollectCompulsoryErrors(keywords));
-  convert(grammar_.CollectRequiredErrors(keywords));
-  convert(grammar_.CollectConflictErrors(keywords));
-  auto measures = CollectMeasureErrors();
-  std::move(measures.begin(), measures.end(), std::back_inserter(diagnostics));
+  convert(grammar_.CollectRuleViolations(keywords, value_of));
 
-  if (diagnostics.empty())
+  // Values of every declared keyword written in the file.
+  std::vector<Diagnostic> warnings;
+  for (std::size_t i = 0; i < entries_.size(); ++i) {
+    const DictionaryKeyWord *declared =
+        grammar_.FindKeyWord(entries_[i].keyword);
+    if (declared == nullptr)
+      continue;
+    for (auto &problem :
+         detail::validate_value(*declared, entries_[i].values, unit_system_)) {
+      const SourceLocation where = problem.token == detail::keyword_token
+                                       ? KeywordLocation(i)
+                                       : TokenLocation(i, problem.token);
+      std::string text = "keyword " + entries_[i].keyword + ": " +
+                         std::move(problem.message);
+      if (where.file_name.empty() && entries_[i].first_line != 0)
+        text = "line " + std::to_string(entries_[i].first_line) + ", " + text;
+      diagnostics.push_back(Diagnostic{Severity::Error, problem.code, where,
+                                       std::move(text),
+                                       std::move(problem.hint), {}});
+    }
+    if (declared->deprecated())
+      warnings.push_back(Diagnostic{
+          warnings_as_errors_ ? Severity::Error : Severity::Warning,
+          DiagnosticCode::Deprecated, KeywordLocation(i),
+          "the keyword " + entries_[i].keyword + " is deprecated",
+          *declared->deprecated(), {}});
+  }
+
+  const bool failed = !diagnostics.empty() || (warnings_as_errors_ && !warnings.empty());
+  std::move(warnings.begin(), warnings.end(), std::back_inserter(diagnostics));
+  if (!failed) {
+    warnings_ = std::move(diagnostics);
     return;
+  }
   if (has_undefined)
     diagnostics.push_back(Diagnostic{
         Severity::Note, DiagnosticCode::UnknownKeyword, {},
@@ -338,8 +292,63 @@ void Dictionary::Checks() {
   Fail(std::move(diagnostics));
 }
 
+void Dictionary::RemoveDefaultEntries() {
+  entries_.erase(std::remove_if(entries_.begin(), entries_.end(),
+                                [](const Entry &entry) {
+                                  return entry.from_default;
+                                }),
+                 entries_.end());
+}
+
+void Dictionary::AddDefaultEntries() {
+  for (const auto &keyword : grammar_.keywords()) {
+    if (!keyword.default_value() || IndexOf(keyword.name()) != npos_index)
+      continue;
+    Entry entry;
+    entry.keyword = keyword.name();
+    entry.from_default = true;
+    for (auto &token : Lexer::tokenize(*keyword.default_value(),
+                                       "default of " + keyword.name())) {
+      if (!entry.option.empty())
+        entry.option += ' ';
+      entry.option += token.spelling;
+      entry.values.push_back(token.text);
+      token.line = 0; // not a position in the input file
+      token.column = 0;
+      entry.tokens.push_back(std::move(token));
+    }
+    entries_.push_back(std::move(entry));
+  }
+}
+
+std::vector<std::string> Dictionary::UnusedKeywords() const {
+  std::vector<std::string> unused;
+  for (const auto &entry : entries_)
+    if (!entry.from_default && grammar_.FindKeyWord(entry.keyword) != nullptr &&
+        !used_.contains(entry.keyword))
+      unused.push_back(entry.keyword);
+  return unused;
+}
+
+std::vector<Diagnostic> Dictionary::CheckUnusedKeywords() const {
+  std::vector<Diagnostic> warnings;
+  for (const auto &keyword : UnusedKeywords())
+    warnings.push_back(Diagnostic{
+        warnings_as_errors_ ? Severity::Error : Severity::Warning,
+        DiagnosticCode::UnusedKeyword, location_of(keyword),
+        "the keyword " + keyword + " is never read by the program",
+        "check the keyword name used in the code that reads dictionary " +
+            name_,
+        {}});
+  if (warnings_as_errors_ && !warnings.empty())
+    Fail(std::move(warnings));
+  return warnings;
+}
+
 void Dictionary::SetGrammar(DictionaryGrammar &grammar) {
   has_grammar_ = false;
+  RemoveDefaultEntries();
+  warnings_.clear();
   const DictionaryGrammar original_state = grammar;
   try {
     grammar.name_ = name_;
@@ -351,14 +360,20 @@ void Dictionary::SetGrammar(DictionaryGrammar &grammar) {
     throw;
   }
   Checks();
+  AddDefaultEntries();
+  used_.clear();
   has_grammar_ = true;
 }
 
 void Dictionary::SetGrammar(std::string_view file_name) {
   has_grammar_ = false;
+  RemoveDefaultEntries();
+  warnings_.clear();
   grammar_.name_ = name_;
   grammar_.ReadFromFile(file_name);
   Checks();
+  AddDefaultEntries();
+  used_.clear();
   has_grammar_ = true;
 }
 
@@ -398,13 +413,18 @@ auto Dictionary::Lookup(std::string_view name_of_keyword,
             std::string(keyword_type_name(expected_type)) + "'",
         0};
 
-  const std::size_t found = IndexOf(name_of_keyword);
+  std::size_t found = IndexOf(name_of_keyword);
+  if (found == npos_index)
+    for (std::size_t i = 0; i < entries_.size(); ++i)
+      if (entries_[i].from_default && entries_[i].keyword == name_of_keyword)
+        found = i;
   if (found == npos_index)
     return ParseError{ParseErrorCode::MissingKeyword,
                       "the required keyword " + keyword +
                           " is not present in the dictionary",
                       0};
 
+  used_.insert(keyword);
   index = found;
   return std::nullopt;
 }
@@ -812,69 +832,5 @@ void Dictionary::ReadMeasures(std::string_view name_of_keyword,
   }
 }
 
-auto Dictionary::CollectMeasureErrors() const -> std::vector<Diagnostic> {
-  std::vector<Diagnostic> diagnostics;
-  const auto add = [&](const std::size_t index, const std::size_t token,
-                       const DiagnosticCode code, std::string message) {
-    const SourceLocation where = token == npos_index
-                                     ? KeywordLocation(index)
-                                     : TokenLocation(index, token);
-    std::string text = "keyword " + entries_[index].keyword + ": " + message;
-    if (where.file_name.empty() && entries_[index].first_line != 0)
-      text = "line " + std::to_string(entries_[index].first_line) + ", " + text;
-    diagnostics.push_back(
-        Diagnostic{Severity::Error, code, where, std::move(text), {}, {}});
-  };
-
-  for (std::size_t i = 0; i < entries_.size(); ++i) {
-    const DictionaryKeyWord *declared =
-        grammar_.FindKeyWord(entries_[i].keyword);
-    if (declared == nullptr || !declared->dimension())
-      continue;
-    const units::Dimension &dimension = *declared->dimension();
-    const auto &tokens = entries_[i].values;
-
-    // (unit, token index) pairs to check
-    std::vector<std::pair<std::string, std::size_t>> unit_tokens;
-    if (declared->type() == SINGLE_MEASURE) {
-      double magnitude = 0.0;
-      if (tokens.size() != 2) {
-        add(i, npos_index, DiagnosticCode::InvalidValue,
-            "a measure requires exactly two values (number and units, e.g. "
-            "'300 K'), but " +
-                std::to_string(tokens.size()) + " were given");
-        continue;
-      }
-      if (!parse_number(tokens[0], magnitude)) {
-        add(i, 0, DiagnosticCode::InvalidValue,
-            "the magnitude of a measure must be a finite number, but " +
-                quote(tokens[0]) + " was given");
-        continue;
-      }
-      unit_tokens.emplace_back(tokens[1], 1);
-    } else {
-      std::vector<double> magnitudes;
-      std::vector<std::string> unit_names;
-      if (const auto error = split_measures(tokens, magnitudes, unit_names)) {
-        add(i, npos_index, DiagnosticCode::InvalidValue, *error);
-        continue;
-      }
-      const bool shared = magnitudes.size() + 1 == tokens.size();
-      for (std::size_t k = 0; k < unit_names.size(); ++k)
-        unit_tokens.emplace_back(unit_names[k],
-                                 shared ? tokens.size() - 1 : 2 * k + 1);
-    }
-
-    std::vector<std::string> checked;
-    for (const auto &[unit, token] : unit_tokens) {
-      if (std::find(checked.begin(), checked.end(), unit) != checked.end())
-        continue;
-      checked.push_back(unit);
-      if (const auto error = units::check_unit(unit, dimension))
-        add(i, token, DiagnosticCode::InvalidUnit, *error);
-    }
-  }
-  return diagnostics;
-}
 
 } // namespace OpenSMOKEpp

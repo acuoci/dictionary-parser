@@ -34,8 +34,10 @@ add_library(dictionary_parser
 	src/DictionaryLexer.cpp
 	src/DictionaryManager.cpp
 	src/DictionaryParser.cpp
+	src/DictionaryRules.cpp
 	src/DictionaryUnits.cpp
 	src/DictionaryUtilities.cpp
+	src/DictionaryValues.cpp
 )
 
 add_library(DictionaryParser::dictionary_parser ALIAS dictionary_parser)
@@ -101,10 +103,11 @@ if (DICTIONARY_PARSER_BUILD_TESTS)
 		tests/test_grammar.cpp
 		tests/test_units.cpp
 		tests/test_diagnostics.cpp
+		tests/test_rules.cpp
 	)
 	target_compile_definitions(unit_tests PRIVATE
 		DICTIONARY_PARSER_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
-	foreach(suite lexer syntax include reads grammar validation units measures diagnostics)
+	foreach(suite lexer syntax include reads grammar validation units measures diagnostics rules semantics)
 		add_test(NAME Unit_${suite} COMMAND unit_tests ${suite})
 	endforeach()
 

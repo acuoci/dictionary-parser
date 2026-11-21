@@ -164,6 +164,7 @@ void DictionaryManager::Load(std::string_view text,
     dictionary.SetName(block.name);
     dictionary.SetFileName(display_name);
     dictionary.SetUnitSystem(unit_system_);
+    dictionary.SetWarningsAsErrors(warnings_as_errors_);
     dictionary.SetEntries(std::move(entries));
     dictionary.SetLocation(origin);
     origins_.emplace(block.name, origin);
@@ -225,6 +226,30 @@ void DictionaryManager::SetUnitSystem(const units::UnitSystem &system) {
   unit_system_ = system;
   for (auto &[name, dictionary] : map_of_dictionaries_)
     dictionary.SetUnitSystem(system);
+}
+
+void DictionaryManager::SetWarningsAsErrors(const bool value) {
+  warnings_as_errors_ = value;
+  for (auto &[name, dictionary] : map_of_dictionaries_)
+    dictionary.SetWarningsAsErrors(value);
+}
+
+std::vector<Diagnostic> DictionaryManager::CheckUnusedKeywords() const {
+  std::vector<Diagnostic> warnings;
+  for (const auto &[name, dictionary] : map_of_dictionaries_) {
+    if (!dictionary.has_grammar())
+      continue;
+    Dictionary copy = dictionary;
+    copy.SetWarningsAsErrors(false);
+    auto found = copy.CheckUnusedKeywords();
+    std::move(found.begin(), found.end(), std::back_inserter(warnings));
+  }
+  if (warnings_as_errors_ && !warnings.empty()) {
+    for (auto &warning : warnings)
+      warning.severity = Severity::Error;
+    throw DictionaryError(std::move(warnings), "DictionaryManager");
+  }
+  return warnings;
 }
 
 bool DictionaryManager::contains(std::string_view name) const {

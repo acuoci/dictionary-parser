@@ -56,16 +56,21 @@ const char *const source = "Dictionary d\n"
                            "  @Ints     1 2 3;\n"
                            "  @Doubles  1 2.5 -3e2;\n"
                            "  @Pairs    CH4 0.5 O2 0.5;\n"
-                           "  @Odd      CH4 0.5 O2;\n"
                            "  @Measures 1 m 2 cm;\n"
                            "  @IntNames 1 a 2 b;\n"
                            "  @Bools    on false;\n"
                            "  @Char     x;\n"
-                           "  @BadInt   4.2;\n"
-                           "  @BadBool  maybe;\n"
-                           "  @TwoDoubles 1 2;\n"
-                           "  @NaN      nan;\n"
                            "}\n";
+
+// Invalid values: reported all together when the grammar is attached.
+const char *const invalid_source = "Dictionary d\n"
+                                   "{\n"
+                                   "  @BadInt   4.2;\n"
+                                   "  @BadBool  maybe;\n"
+                                   "  @TwoDoubles 1 2;\n"
+                                   "  @NaN      nan;\n"
+                                   "  @Odd      CH4 0.5 O2;\n"
+                                   "}\n";
 
 auto grammar() -> std::vector<DictionaryKeyWord> {
   return {kw("@Int", SINGLE_INT),          kw("@Double", SINGLE_DOUBLE),
@@ -127,26 +132,29 @@ TEST_CASE("reads", "typed reads") {
   CHECK(d.has_grammar());
 }
 
-TEST_CASE("reads", "value errors name the line and the keyword") {
-  auto manager = parse(source);
-  auto &d = manager("d");
-  attach(d, grammar());
-  int i = 0;
-  bool flag = false;
-  double x = 0;
-  std::vector<std::string> names;
-  std::vector<double> values;
-  CHECK_THROWS_WITH(d.ReadInt("@BadInt", i),
-                    "test.dic:16:13: error: keyword @BadInt: an integer is "
-                    "required, but '4.2' was given");
-  CHECK_THROWS_WITH(d.ReadBool("@BadBool", flag),
-                    "a boolean (true/false/on/off) is required, but 'maybe'");
-  CHECK_THROWS_WITH(d.ReadDouble("@TwoDoubles", x),
-                    "test.dic:18:3: error: keyword @TwoDoubles: requires "
-                    "exactly one number (double), but 2 values were given");
-  CHECK_THROWS_WITH(d.ReadDouble("@NaN", x), "requires a finite number");
-  CHECK_THROWS_WITH(d.ReadOption("@Odd", names, values),
-                    "pairs of a name and a number (double) are required");
+TEST_CASE("reads", "invalid values are reported when the grammar is attached") {
+  auto manager = parse(invalid_source);
+  try {
+    attach(manager("d"), grammar());
+    CHECK(false);
+  } catch (const DictionaryError &error) {
+    const std::string what = error.what();
+    CHECK(error.error_count() == 5);
+    CHECK(what.find("test.dic:3:13: error: keyword @BadInt: the value must be "
+                    "an integer, but '4.2' was given") != std::string::npos);
+    CHECK(what.find("test.dic:4:13: error: keyword @BadBool: a boolean "
+                    "(true/false/on/off) is required, but 'maybe' was given") !=
+          std::string::npos);
+    CHECK(what.find("test.dic:5:3: error: keyword @TwoDoubles: exactly one "
+                    "number (double) is required, but 2 values were given") !=
+          std::string::npos);
+    CHECK(what.find("keyword @NaN: the value must be a finite number, but "
+                    "'nan' was given") != std::string::npos);
+    CHECK(what.find("keyword @Odd: pairs of a name and a number (double) are "
+                    "required") != std::string::npos);
+    for (const auto &d : error.diagnostics())
+      CHECK(d.code == DiagnosticCode::InvalidValue);
+  }
 }
 
 TEST_CASE("reads", "programming errors are explicit") {
@@ -180,11 +188,8 @@ TEST_CASE("reads", "TryReadDouble error codes") {
         Dictionary::ParseErrorCode::WrongType);
   CHECK(d.TryReadDouble("@Absent").error().code ==
         Dictionary::ParseErrorCode::MissingKeyword);
-  CHECK(d.TryReadDouble("@TwoDoubles").error().code ==
-        Dictionary::ParseErrorCode::BadTokenCount);
-  CHECK(d.TryReadDouble("@TwoDoubles").error().line == 18);
-  CHECK(d.TryReadDouble("@NaN").error().code ==
-        Dictionary::ParseErrorCode::BadNumber);
+  // BadTokenCount and BadNumber cannot occur any more for declared keywords:
+  // invalid values are rejected when the grammar is attached.
 }
 
 TEST_CASE("reads", "SetDictionary validates sizes") {

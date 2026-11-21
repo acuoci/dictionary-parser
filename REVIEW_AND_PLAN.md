@@ -12,6 +12,40 @@ Scope of the study:
 
 ## 0. Progress log
 
+### Phase 3 (rule engine and keyword semantics): done (branch `feature/phase3`, 2026-11-21)
+
+Delivered:
+- **One rule model** (`DictionaryRules.h`):
+  - `Required`, `Forbidden`, `Exactly`, `AtLeast` and `AtMost` (plus the `...OneOf` variants), `Requires`, `RequiresAnyOf`, and `Conflicts` (declared once, symmetric);
+  - conditions `Present`, `Absent`, `Equals` and `OneOf` via `When`. Conditions use the effective value (the file value or the default), and booleans are normalized;
+  - `DictionaryGrammar::AddRule()`;
+  - the legacy keyword lists are translated into the same rules, and `rules()` exposes them all;
+  - in grammar files, `rule:` lines with `when` conditions.
+- **Keyword properties:**
+  - `SetDefault`, `SetAllowedValues`, `SetMinimum` / `SetMaximum` (in SI for measures), `SetSize`, `SetSum` and `SetDeprecated`;
+  - the matching grammar-file property lines;
+  - defaults are served by every `Read*` function, while `CheckOption` still reflects only the file.
+- **Every value written in the file is validated when the grammar is attached** (`src/DictionaryValues.*`): type, token count, units and dimension, allowed values (with suggestions), bounds, list size and sum. Problems are located at the offending token and reported together with rule violations.
+- **Extended coherence analysis:**
+  - rule references, counts and conditions (keyword, type, valid value);
+  - whether each property fits the keyword type;
+  - validity of defaults, and no defaults on compulsory keywords;
+  - dead-keyword and satisfiability analysis extended to new rules, `Forbidden`, and counting rules (not enough usable keywords, or too many always required).
+- **Warnings:**
+  - deprecated keywords are reported in `Dictionary::warnings()`;
+  - `CheckUnusedKeywords()`, on a dictionary or on the manager, reports keywords written but never read, which is the LaminarFlamelets-type bug;
+  - `SetWarningsAsErrors()`.
+- **Documentation:** `Describe()` produces a Markdown table of keywords plus the rules; the `@Help` table now shows defaults, allowed values and rules.
+- **New diagnostic codes:** `cardinality`, `forbidden`, `not-allowed`, `out-of-range`, `deprecated`, `unused-keyword`.
+
+**Behavior change:** an invalid value, such as `@Points 4.5` for an integer, is now an error when the grammar is attached, even if the program never reads that keyword. Before, it was reported only at read time.
+
+Verification:
+- 20 new test cases (92 in total); 16/16 CTest targets pass, also with ASan/UBSan and `-Werror`.
+- **Corpus:** output identical to the previous phases.
+- **Grammars:** all 5 MOM grammars and 98 of 99 OpenSMOKE++2 grammars remain coherent (unchanged).
+- **MOM:** its dictionary test passes with the stricter validation, so its real inputs are valid.
+
 ### Phase 2 (diagnostics and syntax tree): done (branch `feature/phase2`, 2026-11-21)
 
 Delivered:
