@@ -12,9 +12,10 @@ OpenSMOKE++ Dictionary Parser provides a compact parser for `Dictionary ... { ..
 | Dependencies | Zero external runtime or parser dependencies |
 | Architecture | Public headers in `include/`, private compiled implementation in `src/` |
 | Parsing model | Dictionary blocks, `@Keyword` entries, semicolon terminators, multiline values |
-| Validation | Optional grammar layer for required keywords, conflicts, alternatives, and typed reads |
-| Error handling | Standard exceptions with source-aware diagnostics |
-| Tests | CTest smoke tests over real input files in `examples/` |
+| Syntax | Inline dictionaries, `#include`, quoted strings, flexible brace placement |
+| Validation | Grammar layer for required keywords, conflicts, alternatives, and typed reads, with a coherence analysis of the grammar itself |
+| Error handling | Standard exceptions; all problems reported together, `file:line:column` locations, "did you mean" suggestions; nothing printed by the library |
+| Tests | Unit tests, integration tests over `examples/`, optional corpus test |
 | Documentation | Public headers documented with Doxygen comments |
 | License | GNU General Public License v3 |
 
@@ -25,7 +26,8 @@ OpenSMOKE++ Dictionary Parser provides a compact parser for `Dictionary ... { ..
 ├── include/                 # Public API headers
 ├── src/                     # Private implementation files
 ├── examples/                # Example dictionary input files
-├── tests/                   # Integration smoke tests
+├── tests/                   # Unit, integration and corpus tests
+├── .github/workflows/       # Continuous integration (GCC, Clang, sanitizers)
 ├── CMakeLists.txt           # CMake build and test configuration
 ├── LICENSE                  # GNU GPL v3 license text
 └── README.md
@@ -49,12 +51,84 @@ Dictionary dae-parameters
 Core syntax rules:
 
 - `Dictionary <name>` begins a top-level block.
-- `{` and `}` delimit the dictionary body.
+- `{` and `}` delimit the dictionary body. They may be placed on their own
+  lines or on the same line as the name or the entries
+  (`Dictionary grid { @Points 100; }`).
 - Options begin with `@`.
 - Every option terminates with `;`.
 - Values are whitespace-tokenized.
-- `//` starts a line comment.
+- `//` starts a comment running to the end of the line when it appears at the
+  start of a token (at the beginning of a line, after a blank, or right after
+  `;`, `{`, `}`). Inside a value, as in `http://host/x` or `dir//file`, it is
+  part of the value.
 - Keyword entries may span multiple physical lines until the terminating `;`.
+
+### Quoted strings
+
+A value enclosed in double quotes may contain blanks and the characters
+`;`, `@`, `{`, `}` and `//`. The closing quote must be on the same line;
+`\"` and `\\` are the only escape sequences.
+
+```text
+@Output   "Output files/run 01";
+@Title    "C2H4/air flame @ 1 atm; strain rate 80 1/s";
+```
+
+### Inline dictionaries
+
+A keyword followed directly by a block defines a nested dictionary. It is
+stored under the name `<parent>/<Keyword>` (without `@`), and the keyword's
+value is that name, so existing code reading it with `ReadDictionary` works
+unchanged. Inline blocks can be nested, and a `;` after the closing brace is
+optional.
+
+```text
+Dictionary BatchReactor
+{
+    @InitialStatus
+    {
+        @Temperature  1000 K;
+        @Pressure     1 atm;
+        @MoleFractions H2 0.3 O2 0.7;
+    }
+    @Options { @Verbose true; }
+}
+```
+
+Here `ReadDictionary("@InitialStatus", name)` returns
+`BatchReactor/InitialStatus`, which is retrieved with `manager(name)`.
+
+### Including files
+
+`#include "file.dic"` (outside dictionary blocks) reads the dictionaries of
+another file. Relative paths are resolved against the directory of the file
+containing the directive. A file included more than once is read only once;
+circular includes are reported as errors. Diagnostics refer to the file where
+the problem is.
+
+```text
+#include "common/solver-parameters.dic"
+```
+
+See [examples/syntax-extensions](examples/syntax-extensions) for a complete
+example.
+
+### Diagnostics
+
+Syntax errors are thrown as `OpenSMOKEpp::Lexer::SyntaxError` (derived from
+`std::runtime_error`), which also exposes the file, line and column:
+
+```text
+input.dic:23:5: error: unexpected keyword @Pressure: missing ';' at the end of keyword @Temperature (line 22)
+```
+
+Grammar validation reports every problem at once in a single exception:
+
+```text
+Dictionary initial-mixture defined in file input.dic: 2 errors found:
+  - the keyword @Temprature is not recognized in this dictionary (did you mean @Temperature?)
+  - the compulsory keyword @Temperature is missing
+```
 
 ## Quick Start
 
@@ -129,13 +203,37 @@ int main()
 }
 ```
 
+### Grammar Coherence
+
+When a grammar is built, its rules are checked before any dictionary is
+validated. The grammar is rejected (with every problem listed) if, for example:
+
+- a keyword name does not start with `@` or is defined twice;
+- a rule references an undefined keyword or the keyword itself;
+- a keyword both requires and conflicts with another keyword;
+- compulsory alternatives do not form a closed group, or a conflict is not
+  declared on both keywords;
+- following `required_keywords` transitively, a keyword would force two
+  conflicting keywords, or two members of the same alternative group, so it
+  can never be used;
+- no input could ever satisfy the grammar.
+
 ## Build
 
 ### Requirements
 
 - CMake 3.30 or newer
-- A C++20-capable compiler
+- A C++20-capable compiler (GCC 11+, Clang 16+, Apple Clang 15+)
 - Standard C++ library with `<filesystem>` and `<charconv>` support
+
+### Build Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `DICTIONARY_PARSER_BUILD_TESTS` | `ON` when top-level | Build the tests |
+| `DICTIONARY_PARSER_WARNINGS_AS_ERRORS` | `OFF` | Treat warnings as errors |
+| `DICTIONARY_PARSER_SANITIZE` | `OFF` | AddressSanitizer + UndefinedBehaviorSanitizer (GCC/Clang) |
+| `DICTIONARY_PARSER_CORPUS_DIR` | `../OpenSMOKEpp2` if present | Directory scanned recursively for `*.dic` files by the corpus test |
 
 ### Configure and Compile
 
@@ -160,15 +258,20 @@ DictionaryParser::dictionary_parser
 
 ## Run Tests
 
-The repository includes a lightweight integration test harness based on CTest.
-
-From the build directory:
+The repository includes a dependency-free unit-test harness and CTest
+integration. From the build directory:
 
 ```bash
 ctest --output-on-failure
 ```
 
-Current tests parse the input files in `examples/`, including a grammar-aware test for `input3.dic`.
+- `Unit_*`: lexer, syntax, `#include`, typed reads, grammar coherence and
+  dictionary validation (`unit_tests [suite...]` runs selected suites).
+- `Test_Example_*`: parse the input files in `examples/`, including a
+  grammar-aware test for `input3.dic`.
+- `Test_Corpus`: parses every `*.dic` file below `DICTIONARY_PARSER_CORPUS_DIR`
+  (enabled only when the directory exists). `test_corpus <dir> --dump` prints
+  the parsed content, which is useful to compare two parser versions.
 
 ## Using the Library from CMake
 
@@ -193,13 +296,12 @@ Then include public headers:
 
 | Header | Purpose |
 | --- | --- |
-| `DictionaryManager.h` | Reads files and owns parsed dictionaries |
+| `DictionaryManager.h` | Reads files or strings (with includes) and owns parsed dictionaries |
 | `Dictionary.h` | Provides keyword lookup, grammar validation, and typed reads |
-| `DictionaryGrammar.h` | Base class for user-defined grammar rules |
+| `DictionaryGrammar.h` | Base class for user-defined grammar rules and coherence checks |
 | `DictionaryKeyWord.h` | Keyword metadata and expected value types |
 | `DictionaryInputFile.h` | Preprocessed input-file representation |
-| `DictionaryFile.h` | Single dictionary-block parser |
-| `DictionaryLexer.h` | Low-level lexical utilities |
+| `DictionaryLexer.h` | Tokenizer, `SyntaxError`, and low-level lexical utilities |
 
 ## Examples
 
@@ -209,7 +311,8 @@ Example input files are available in:
 examples/
 ├── input.1.dic
 ├── input.2.dic
-└── input3.dic
+├── input3.dic
+└── syntax-extensions/   # inline dictionaries, #include, quoted strings
 ```
 
 These files cover representative dictionary layouts, comments, scalar options, measured values, and grammar-validated model configuration.

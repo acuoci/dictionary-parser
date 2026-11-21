@@ -38,6 +38,8 @@
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace OpenSMOKEpp::Lexer {
 namespace {
@@ -57,7 +59,56 @@ namespace {
     -> bool {
   return ascii_lower(lhs) == ascii_lower(rhs);
 }
+
+[[nodiscard]] auto is_delimiter(const char value) noexcept -> bool {
+  return value == ';' || value == '{' || value == '}';
+}
+
+[[nodiscard]] auto starts_comment(const std::string_view text,
+                                  const std::size_t i) noexcept -> bool {
+  return i + 1 < text.size() && text[i] == '/' && text[i + 1] == '/';
+}
+
+// Position of the first `//` that starts a comment, honoring the token-start
+// rule and double-quoted strings. Returns npos if there is none.
+[[nodiscard]] auto find_comment_start(const std::string_view text) noexcept
+    -> std::size_t {
+  bool at_token_start = true;
+  bool in_string = false;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    if (in_string) {
+      if (c == '\\' && i + 1 < text.size() &&
+          (text[i + 1] == '"' || text[i + 1] == '\\'))
+        ++i;
+      else if (c == '"') {
+        in_string = false;
+        at_token_start = true;
+      }
+      continue;
+    }
+    if (is_space(c) || is_delimiter(c)) {
+      at_token_start = true;
+      continue;
+    }
+    if (at_token_start && starts_comment(text, i))
+      return i;
+    if (at_token_start && c == '"') {
+      in_string = true;
+      continue;
+    }
+    at_token_start = false;
+  }
+  return std::string_view::npos;
+}
 } // namespace
+
+SyntaxError::SyntaxError(std::string file_name, const unsigned int line,
+                         const unsigned int column, const std::string &message)
+    : std::runtime_error(file_name + ":" + std::to_string(line) + ":" +
+                         std::to_string(column) + ": error: " + message),
+      file_name_(std::move(file_name)), line_(line), column_(column),
+      message_(message) {}
 
 auto trim(const std::string_view text) noexcept -> std::string_view {
   std::size_t first = 0;
@@ -76,7 +127,7 @@ auto trim_copy(const std::string_view text) -> std::string {
 }
 
 auto strip_comment(const std::string_view text) noexcept -> std::string_view {
-  const std::size_t marker = text.find("//");
+  const std::size_t marker = find_comment_start(text);
   if (marker == std::string_view::npos)
     return text;
   return text.substr(0, marker);
@@ -196,7 +247,7 @@ auto read_and_preprocess_file(const std::filesystem::path &file_name)
   int line_number = 1;
   std::string line;
   while (std::getline(input, line)) {
-    const std::size_t comment_marker = line.find("//");
+    const std::size_t comment_marker = find_comment_start(line);
     if (comment_marker != std::string::npos)
       line.erase(comment_marker);
     replace_tabs_with_spaces(line);
@@ -218,5 +269,117 @@ auto read_and_preprocess_file(const std::filesystem::path &file_name)
                              file_name.string());
 
   return result;
+}
+auto tokenize(const std::string_view source, const std::string_view file_name)
+    -> std::vector<Token> {
+  const std::string file(file_name);
+  std::vector<Token> tokens;
+  tokens.reserve(source.size() / 4);
+
+  std::size_t i = 0;
+  unsigned int line = 1;
+  unsigned int column = 1;
+
+  const auto advance = [&]() noexcept {
+    if (source[i] == '\n') {
+      ++line;
+      column = 1;
+    } else
+      ++column;
+    ++i;
+  };
+
+  const auto describe = [](const char c) -> std::string {
+    if (static_cast<unsigned char>(c) < 32U || c == 127)
+      return "character code " + std::to_string(static_cast<int>(c));
+    return std::string("'") + c + "'";
+  };
+
+  while (i < source.size()) {
+    const char c = source[i];
+
+    if (is_space(c)) {
+      advance();
+      continue;
+    }
+
+    // Comment: only reachable at the start of a token.
+    if (starts_comment(source, i)) {
+      while (i < source.size() && source[i] != '\n')
+        advance();
+      continue;
+    }
+
+    const unsigned int token_line = line;
+    const unsigned int token_column = column;
+
+    if (is_delimiter(c)) {
+      const TokenKind kind = c == ';'   ? TokenKind::Semicolon
+                             : c == '{' ? TokenKind::LeftBrace
+                                        : TokenKind::RightBrace;
+      tokens.push_back(
+          Token{kind, std::string(1, c), std::string(1, c), token_line,
+                token_column});
+      advance();
+      continue;
+    }
+
+    if (c == '"') {
+      std::string text;
+      std::string spelling(1, '"');
+      advance();
+      bool closed = false;
+      while (i < source.size()) {
+        const char d = source[i];
+        if (d == '\n' || d == '\r')
+          break;
+        if (d == '\\' && i + 1 < source.size() &&
+            (source[i + 1] == '"' || source[i + 1] == '\\')) {
+          spelling += d;
+          spelling += source[i + 1];
+          text += source[i + 1];
+          advance();
+          advance();
+          continue;
+        }
+        spelling += d;
+        advance();
+        if (d == '"') {
+          closed = true;
+          break;
+        }
+        text += d;
+      }
+      if (!closed)
+        throw SyntaxError(file, token_line, token_column,
+                          "unterminated quoted string: the closing '\"' must "
+                          "be on the same line");
+      if (i < source.size() && !is_space(source[i]) &&
+          !is_delimiter(source[i]) && !starts_comment(source, i))
+        throw SyntaxError(file, line, column,
+                          "unexpected " + describe(source[i]) +
+                              " right after a quoted string: separate the "
+                              "values with a blank");
+      tokens.push_back(Token{TokenKind::QuotedString, std::move(text),
+                             std::move(spelling), token_line, token_column});
+      continue;
+    }
+
+    std::string word;
+    while (i < source.size() && !is_space(source[i]) &&
+           !is_delimiter(source[i])) {
+      if (source[i] == '"')
+        throw SyntaxError(file, line, column,
+                          "unexpected '\"' inside the word '" + word +
+                              "': a quoted string must start at the "
+                              "beginning of a value");
+      word += source[i];
+      advance();
+    }
+    tokens.push_back(
+        Token{TokenKind::Word, word, word, token_line, token_column});
+  }
+
+  return tokens;
 }
 } // namespace OpenSMOKEpp::Lexer
