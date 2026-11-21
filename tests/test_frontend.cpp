@@ -319,6 +319,17 @@ TEST_CASE("frontend", "get_if, get_or, has and read") {
   reactor::Solver solver{};
   batch.read(reactor::OdeSolver, solver);
   CHECK(solver == reactor::Solver::CVODE);
+
+  // read_if: assigns only when present (or defaulted), else keeps the value
+  double volume = 7.0;
+  CHECK(!batch.read_if(reactor::Volume, volume));
+  CHECK(near(volume, 7.0));
+  double end = 0.0;
+  CHECK(batch.read_if(reactor::EndTime, end));
+  CHECK(near(end, 2e-3));
+  int steps = 0;
+  CHECK(batch.read_if(reactor::Steps, steps)); // default counts
+  CHECK(steps == 100);
 }
 
 TEST_CASE("frontend", "references are followed with their own grammar") {

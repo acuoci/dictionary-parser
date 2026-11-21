@@ -1434,6 +1434,26 @@ public:
     out = get(key);
   }
 
+  /**
+   * \brief Reads a key into `out` only if it is present (or has a default);
+   * otherwise `out` keeps its value. Returns whether `out` was assigned.
+   * Does not compile if the type of `out` is not exactly the type of the key.
+   *
+   * Replaces the legacy idiom `if (CheckOption(k)) Read(k, out);`, keeping
+   * the value already in `out` (e.g. set by a constructor) as the default.
+   */
+  template <fixed_string N, class S, class T>
+  auto read_if(const KeySpec<N, S> &key, T &out) const -> bool {
+    static_assert(std::is_same_v<T, typename S::type>,
+                  "View::read_if: the variable does not have the type "
+                  "declared by the key (see KeySpec<...>::value_type)");
+    auto value = get_if(key);
+    if (!value)
+      return false;
+    out = std::move(*value);
+    return true;
+  }
+
   /** \brief Whether the key is written in the file. */
   template <fixed_string N, class S>
   [[nodiscard]] auto has(const KeySpec<N, S> &key) const -> bool {

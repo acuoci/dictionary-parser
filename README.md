@@ -483,7 +483,9 @@ keys instead of strings: `Required`, `Forbidden`, `Exactly`, `AtLeast`,
 returns `std::nullopt` when the key is absent and has no default;
 `get_or(key, fallback)` returns a fallback instead; `has(key)` tells whether
 the key is written in the file; `read(key, out)` requires `out` to have the
-exact type of the key. `dictionary()` gives access to the underlying
+exact type of the key; `read_if(key, out)` assigns `out` only when the key is
+present (or has a default) and returns whether it did, so the value already in
+`out` acts as the default (the legacy `if (CheckOption(k)) Read(k, out);`). `dictionary()` gives access to the underlying
 `Dictionary` (warnings, locations, legacy reads).
 
 **References and the manager.** `manager.view<G>(name)` attaches `G` to a
