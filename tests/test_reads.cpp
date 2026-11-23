@@ -90,43 +90,24 @@ TEST_CASE("reads", "typed reads") {
   auto &d = manager("d");
   attach(d, grammar());
 
-  int i = 0;
-  d.ReadInt("@Int", i);
-  CHECK(i == 42);
-  double x = 0;
-  d.ReadDouble("@Double", x);
-  CHECK(x == 2.5e-3);
-  bool flag = false;
-  d.ReadBool("@Bool", flag);
-  CHECK(flag);
-  d.ReadBool("@Off", flag);
-  CHECK(!flag);
-  std::string units;
-  d.ReadMeasure("@Measure", x, units);
-  CHECK(x == 300.0);
-  CHECK(units == "K");
-  std::vector<int> ints;
-  d.ReadOption("@Ints", ints);
-  CHECK(ints == (std::vector<int>{1, 2, 3}));
-  std::vector<double> doubles;
-  d.ReadOption("@Doubles", doubles);
-  CHECK(doubles == (std::vector<double>{1, 2.5, -300}));
-  std::vector<std::string> names;
-  d.ReadOption("@Pairs", names, doubles);
-  CHECK(names == (std::vector<std::string>{"CH4", "O2"}));
-  CHECK(doubles == (std::vector<double>{0.5, 0.5}));
-  d.ReadOption("@Measures", doubles, names);
-  CHECK(doubles == (std::vector<double>{1, 2}));
-  CHECK(names == (std::vector<std::string>{"m", "cm"}));
-  d.ReadOption("@IntNames", ints, names);
-  CHECK(ints == (std::vector<int>{1, 2}));
-  CHECK(names == (std::vector<std::string>{"a", "b"}));
-  std::vector<bool> bools;
-  d.ReadOption("@Bools", bools);
-  CHECK(bools == (std::vector<bool>{true, false}));
-  char c = 0;
-  d.ReadChar("@Char", c);
-  CHECK(c == 'x');
+  CHECK(d.Read<int>("@Int") == 42);
+  CHECK(d.Read<double>("@Double") == 2.5e-3);
+  CHECK(d.Read<bool>("@Bool"));
+  CHECK(!d.Read<bool>("@Off"));
+  // Without a dimension, a measure is a record (value, units).
+  CHECK((d.Read<std::pair<double, std::string>>("@Measure") ==
+        (std::pair<double, std::string>{300.0, "K"})));
+  CHECK(d.Read<std::vector<int>>("@Ints") == (std::vector<int>{1, 2, 3}));
+  CHECK(d.Read<std::vector<double>>("@Doubles") ==
+        (std::vector<double>{1, 2.5, -300}));
+  using Pairs = std::vector<std::pair<std::string, double>>;
+  CHECK(d.Read<Pairs>("@Pairs") == (Pairs{{"CH4", 0.5}, {"O2", 0.5}}));
+  using Measures = std::vector<std::pair<double, std::string>>;
+  CHECK(d.Read<Measures>("@Measures") == (Measures{{1, "m"}, {2, "cm"}}));
+  using IntNames = std::vector<std::pair<int, std::string>>;
+  CHECK(d.Read<IntNames>("@IntNames") == (IntNames{{1, "a"}, {2, "b"}}));
+  CHECK(d.Read<std::vector<bool>>("@Bools") == (std::vector<bool>{true, false}));
+  CHECK(d.Read<std::string>("@Char") == "x");
   CHECK(d.CheckOption("@Int"));
   CHECK(!d.CheckOption("@Absent"));
   CHECK(d.has_grammar());
@@ -160,36 +141,17 @@ TEST_CASE("reads", "invalid values are reported when the grammar is attached") {
 TEST_CASE("reads", "programming errors are explicit") {
   auto manager = parse(source);
   auto &d = manager("d");
-  double x = 0;
-  CHECK_THROWS_WITH(d.ReadDouble("@Double", x),
+  CHECK_THROWS_WITH((void)d.Read<double>("@Double"),
                     "cannot read keyword @Double: no grammar is attached to "
                     "this dictionary");
   attach(d, grammar());
-  CHECK_THROWS_WITH(d.ReadDouble("@Typo", x),
+  CHECK_THROWS_WITH((void)d.Read<double>("@Typo"),
                     "the keyword @Typo is not declared in the grammar");
-  CHECK_THROWS_WITH(d.ReadDouble("@Measure", x),
-                    "the keyword @Measure is declared as 'single_measure' in "
-                    "the grammar (read it with ReadMeasure), but it was read "
-                    "as 'single_double'");
-  CHECK_THROWS_WITH(d.ReadDouble("@Absent", x),
+  CHECK_THROWS_WITH((void)d.Read<double>("@Measure"),
+                    "the value of @Measure cannot be read as the requested C++ "
+                    "type");
+  CHECK_THROWS_WITH((void)d.Read<double>("@Absent"),
                     "the required keyword @Absent is not present");
-}
-
-TEST_CASE("reads", "TryReadDouble error codes") {
-  auto manager = parse(source);
-  auto &d = manager("d");
-  CHECK(d.TryReadDouble("@Double").error().code ==
-        Dictionary::ParseErrorCode::NoGrammar);
-  attach(d, grammar());
-  CHECK(d.TryReadDouble("@Double").value() == 2.5e-3);
-  CHECK(d.TryReadDouble("@Typo").error().code ==
-        Dictionary::ParseErrorCode::UndeclaredKeyword);
-  CHECK(d.TryReadDouble("@Int").error().code ==
-        Dictionary::ParseErrorCode::WrongType);
-  CHECK(d.TryReadDouble("@Absent").error().code ==
-        Dictionary::ParseErrorCode::MissingKeyword);
-  // BadTokenCount and BadNumber cannot occur any more for declared keywords:
-  // invalid values are rejected when the grammar is attached.
 }
 
 TEST_CASE("reads", "SetDictionary validates sizes") {

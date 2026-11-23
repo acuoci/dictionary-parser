@@ -47,32 +47,28 @@ namespace {
 struct TypeInfo {
   DictionaryKeyWordTypes type;
   std::string_view name;
-  std::string_view reader;
 };
 
 constexpr TypeInfo type_table[] = {
-    {NONE, "none", "(no reader)"},
-    {SINGLE_INT, "single_int", "ReadInt"},
-    {SINGLE_DOUBLE, "single_double", "ReadDouble"},
-    {SINGLE_STRING, "single_string", "ReadString"},
-    {SINGLE_CHAR, "single_char", "ReadChar"},
-    {SINGLE_BOOL, "single_bool", "ReadBool"},
-    {SINGLE_MEASURE, "single_measure", "ReadMeasure"},
-    {SINGLE_PATH, "single_path", "ReadPath"},
-    {SINGLE_DICTIONARY, "single_dictionary", "ReadDictionary"},
-    {VECTOR_INT, "vector_int", "ReadOption(std::vector<int>&)"},
-    {VECTOR_DOUBLE, "vector_double", "ReadOption(std::vector<double>&)"},
-    {VECTOR_STRING, "vector_string", "ReadOption(std::vector<std::string>&)"},
-    {VECTOR_CHAR, "vector_char", "ReadOption(std::vector<char>&)"},
-    {VECTOR_BOOL, "vector_bool", "ReadOption(BoolVector&)"},
-    {VECTOR_MEASURE, "vector_measure",
-     "ReadOption(std::vector<double>&, std::vector<std::string>&)"},
-    {VECTOR_STRING_DOUBLE, "vector_string_double",
-     "ReadOption(std::vector<std::string>&, std::vector<double>&)"},
-    {VECTOR_INT_STRING, "vector_int_string",
-     "ReadOption(std::vector<int>&, std::vector<std::string>&)"},
-    {SEQUENCE_STRING, "sequence_string", "ReadSequence"},
-    {STRUCTURED, "structured", "Read<T> or ReadValue"},
+    {NONE, "none"},
+    {SINGLE_INT, "single_int"},
+    {SINGLE_DOUBLE, "single_double"},
+    {SINGLE_STRING, "single_string"},
+    {SINGLE_CHAR, "single_char"},
+    {SINGLE_BOOL, "single_bool"},
+    {SINGLE_MEASURE, "single_measure"},
+    {SINGLE_PATH, "single_path"},
+    {SINGLE_DICTIONARY, "single_dictionary"},
+    {VECTOR_INT, "vector_int"},
+    {VECTOR_DOUBLE, "vector_double"},
+    {VECTOR_STRING, "vector_string"},
+    {VECTOR_CHAR, "vector_char"},
+    {VECTOR_BOOL, "vector_bool"},
+    {VECTOR_MEASURE, "vector_measure"},
+    {VECTOR_STRING_DOUBLE, "vector_string_double"},
+    {VECTOR_INT_STRING, "vector_int_string"},
+    {SEQUENCE_STRING, "sequence_string"},
+    {STRUCTURED, "structured"},
 };
 } // namespace
 
@@ -81,14 +77,6 @@ auto keyword_type_name(const DictionaryKeyWordTypes type) noexcept
   for (const auto &info : type_table)
     if (info.type == type)
       return info.name;
-  return "unknown";
-}
-
-auto keyword_type_reader(const DictionaryKeyWordTypes type) noexcept
-    -> std::string_view {
-  for (const auto &info : type_table)
-    if (info.type == type)
-      return info.reader;
   return "unknown";
 }
 

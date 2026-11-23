@@ -12,6 +12,20 @@ Scope of the study:
 
 ## 0. Progress log
 
+### Legacy reading API removed (branch `feature/phase6`, 2026-11-23)
+
+OpenSMOKE++2 and MOM now read every dictionary through typed grammars and views, so the out-parameter readers were removed from `Dictionary` (§4.8 planned to deprecate them at the end of the migration; nothing built uses them any more):
+- `ReadInt`, `ReadDouble`, `TryReadDouble`, `ReadChar`, `ReadString`, `ReadBool`, `ReadPath`, `ReadSequence`, `ReadDictionary`, the three `ReadMeasure` and two `ReadMeasures` overloads, and the twelve `ReadOption` overloads, with the `BoolVector` alias.
+- Internal pieces used only by them: the type-checked `CheckOption(name, type)`/`Lookup`, `ResolveDimension`, `keyword_type_reader`, and the codes `ParseErrorCode::BadTokenCount`/`BadNumber` and `DiagnosticCode::WrongDimension`, which could no longer be produced.
+
+Kept: `Read<T>`, `TryRead<T>`, `ReadValue`, `CheckOption(name)`, runtime grammars (`DictionaryGrammar`, `DictionaryKeyWord`, grammar files) and `SetGrammar`, because the typed front end is built on them.
+
+Behavior for readers moving from the old functions:
+- a measure keyword without a dimension is a record: `Read<std::pair<double, std::string>>` returns the raw magnitude and unit;
+- a sequence (`SEQUENCE_STRING`) read with `Read<std::string>` returns its tokens joined by one blank, without quotes; the raw text is still in `entries()[i].option`.
+
+Verification: the library tests were ported to `Read<T>` (the tests that only covered the removed overloads, such as explicit-dimension `ReadMeasure`, were dropped); 30/30 CTest targets pass. MOM and OpenSMOKE++2 were rebuilt against the library with unchanged results.
+
 ### Phase 6 (typed compile-time front end): done (branch `feature/phase6`, 2026-11-21)
 
 Delivered (`include/DictionaryTyped.h`, header only, plus small hooks in `DictionaryManager`):

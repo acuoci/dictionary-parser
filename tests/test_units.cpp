@@ -259,49 +259,18 @@ TEST_CASE("measures", "values are converted to SI") {
   auto manager = parse(measures_source);
   auto &d = manager("d");
   attach(d, measures_grammar());
-  double value = 0.0;
-  d.ReadMeasure("@Velocity", value);
-  CHECK(close(value, 0.195));
-  d.ReadMeasure("@Temperature", value);
-  CHECK(close(value, 298.15));
-  d.ReadMeasure("@DeltaT", value);
-  CHECK(close(value, 10.0));
-  std::vector<double> values;
-  d.ReadMeasures("@Times", values);
-  CHECK(values == (std::vector<double>{60.0, 120.0, 180.0}));
-  d.ReadMeasures("@Lengths", values);
-  CHECK(close(values.at(0), 1.0));
-  CHECK(close(values.at(1), 0.2));
+  CHECK(close(d.Read<double>("@Velocity"), 0.195));
+  CHECK(close(d.Read<double>("@Temperature"), 298.15));
+  CHECK(close(d.Read<double>("@DeltaT"), 10.0));
+  CHECK(d.Read<std::vector<double>>("@Times") ==
+        (std::vector<double>{60.0, 120.0, 180.0}));
+  const auto lengths = d.Read<std::vector<double>>("@Lengths");
+  CHECK(close(lengths.at(0), 1.0));
+  CHECK(close(lengths.at(1), 0.2));
 
-  // Legacy reads are unchanged.
-  std::string unit;
-  d.ReadMeasure("@Velocity", value, unit);
-  CHECK(value == 19.5);
-  CHECK(unit == "cm/s");
-  std::vector<std::string> unit_names;
-  d.ReadOption("@Times", values, unit_names);
-  CHECK(values == (std::vector<double>{1.0, 2.0, 3.0}));
-  CHECK(unit_names == (std::vector<std::string>{"min", "min", "min"}));
-}
-
-TEST_CASE("measures", "explicit dimension for keywords without one") {
-  auto manager = parse(measures_source);
-  auto &d = manager("d");
-  attach(d, measures_grammar());
-  double value = 0.0;
-  CHECK_THROWS_WITH(d.ReadMeasure("@Raw", value),
-                    "the keyword @Raw declares no dimension in the grammar");
-  d.ReadMeasure("@Raw", value, dim::Temperature);
-  CHECK(value == 300.0);
-  CHECK_THROWS_WITH(d.ReadMeasure("@Velocity", value, dim::Length),
-                    "the keyword @Velocity is declared with dimension velocity "
-                    "[m/s] in the grammar, but it was read as length [m]");
-  CHECK_THROWS_WITH(d.ReadMeasure("@DeltaT", value, dim::Temperature),
-                    "declared with dimension temperature difference [K]");
-  CHECK_THROWS_WITH(d.ReadMeasure("@Raw", value, dim::Velocity),
-                    "test.dic:8:21: error: keyword @Raw: units 'K' "
-                    "(temperature [K]) are not compatible with the expected "
-                    "velocity [m/s]");
+  // Without a dimension, a measure is read as (value, units).
+  CHECK((d.Read<std::pair<double, std::string>>("@Raw") ==
+        (std::pair<double, std::string>{300.0, "K"})));
 }
 
 TEST_CASE("measures", "units are validated when the grammar is attached") {
@@ -369,11 +338,8 @@ TEST_CASE("measures", "grammar files can declare dimensions") {
   auto manager = parse("Dictionary d { @Velocity 36 km/h; @DeltaT 9 F; }");
   auto &d = manager("d");
   d.SetGrammar(grammar.string());
-  double value = 0.0;
-  d.ReadMeasure("@Velocity", value);
-  CHECK(close(value, 10.0));
-  d.ReadMeasure("@DeltaT", value);
-  CHECK(close(value, 5.0));
+  CHECK(close(d.Read<double>("@Velocity"), 10.0));
+  CHECK(close(d.Read<double>("@DeltaT"), 5.0));
 
   const auto bad = dir.write("bad.grammar",
                              "keyword: @V\ntype: single_measure\n"
@@ -412,20 +378,15 @@ TEST_CASE("measures", "the unit system is selected on the manager") {
       kw("@Ea", SINGLE_MEASURE).SetDimension(dim::MolarEnergy),
       kw("@MW", SINGLE_MEASURE).SetDimension(dim::MolarMass)};
   attach(manager("d"), grammar);
-  double value = 0.0;
   // Default: kilomole (OpenSMOKE++ convention).
   CHECK(manager("d").unit_system() == si_kmol);
-  manager("d").ReadMeasure("@Ea", value);
-  CHECK(close(value, 1.2552e8)); // J/kmol
-  manager("d").ReadMeasure("@MW", value);
-  CHECK(close(value, 28.0)); // kg/kmol
+  CHECK(close(manager("d").Read<double>("@Ea"), 1.2552e8)); // J/kmol
+  CHECK(close(manager("d").Read<double>("@MW"), 28.0)); // kg/kmol
 
   // Strict SI on request.
   manager.SetUnitSystem(si);
-  manager("d").ReadMeasure("@Ea", value);
-  CHECK(close(value, 125520.0)); // J/mol
-  manager("d").ReadMeasure("@MW", value);
-  CHECK(close(value, 0.028)); // kg/mol
+  CHECK(close(manager("d").Read<double>("@Ea"), 125520.0)); // J/mol
+  CHECK(close(manager("d").Read<double>("@MW"), 0.028)); // kg/mol
 
   // Dictionaries loaded after the call inherit the system.
   manager.ReadDictionariesFromString("Dictionary e { @MW 2 g/mol; }", "e.dic");

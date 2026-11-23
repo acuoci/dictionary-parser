@@ -81,8 +81,7 @@ A value enclosed in double quotes may contain blanks and the characters
 
 A keyword followed directly by a block defines a nested dictionary. It is
 stored under the name `<parent>/<Keyword>` (without `@`), and the keyword's
-value is that name, so existing code reading it with `ReadDictionary` works
-unchanged. Inline blocks can be nested, and a `;` after the closing brace is
+value is that name, so it is read like any reference to a dictionary. Inline blocks can be nested, and a `;` after the closing brace is
 optional.
 
 ```text
@@ -98,8 +97,9 @@ Dictionary BatchReactor
 }
 ```
 
-Here `ReadDictionary("@InitialStatus", name)` returns
-`BatchReactor/InitialStatus`, which is retrieved with `manager(name)`.
+Here `Read<std::string>("@InitialStatus")` returns
+`BatchReactor/InitialStatus`, which is retrieved with `manager(name)` (a
+typed `Reference` key follows it directly).
 
 ### Including files
 
@@ -144,7 +144,7 @@ flame.dic:4:20: error: keyword @Velocity: units 'K' (temperature [K]) are not co
 - Validation reports **all** problems at once; a missing keyword points at
   the dictionary name, a conflict points at the later keyword with a note on
   the earlier one, value and unit errors point at the exact token.
-- Errors raised while reading (`ReadInt`, `ReadMeasure`, ...) have the same
+- Errors raised while reading (`Read<T>`, `ReadValue`) have the same
   form, because each dictionary keeps a shared copy of its source text.
 - Programs can inspect the diagnostics instead of parsing text:
 
@@ -162,7 +162,7 @@ try {
   `missing-compulsory`, `alternative-group`, `missing-required`, `conflict`,
   `help-requested`, `invalid-value`, `invalid-unit`, and, for mistakes in the
   calling code, `no-grammar`, `undeclared-keyword`, `wrong-type`,
-  `missing-keyword`, `wrong-dimension`, `grammar-incoherent`.
+  `missing-keyword`, `grammar-incoherent`.
 - Syntax errors are `Lexer::SyntaxError`, a `DictionaryError` that also
   exposes `file_name()`, `line()`, `column()` and `message()`.
 - `Dictionary::entries()` gives the parsed entries (keyword, values, token
@@ -216,7 +216,7 @@ Chainable setters on `DictionaryKeyWord` (next to `SetDimension`):
 
 | Setter | Applies to | Effect |
 | --- | --- | --- |
-| `SetDefault("1800 kg/m3")` | any non-compulsory keyword | value returned by `Read*` when the keyword is absent (`CheckOption` still reports only the file) |
+| `SetDefault("1800 kg/m3")` | any non-compulsory keyword | value returned by `Read<T>` when the keyword is absent (`CheckOption` still reports only the file) |
 | `SetAllowedValues({"A", "B"})` | `single_string`, `vector_string` | other values are rejected, with a suggestion |
 | `SetMinimum(x, inclusive)`, `SetMaximum(x, inclusive)` | integers, doubles, measures (in SI, dimension required), numbers of pair lists | bounds |
 | `SetSize(n)`, `SetSize(min, max)` | lists (pairs count as one element) | number of elements |
@@ -241,7 +241,7 @@ flame.dic:9:16: error: keyword @Temperature: the value 5 C (= 278.15 K) must be 
   in `dictionary.warnings()` after `SetGrammar`.
 - `dictionary.CheckUnusedKeywords()` (or `manager.CheckUnusedKeywords()` for
   all dictionaries), called after reading, returns a warning for each keyword
-  written in the file but never read by a `Read*` call: typically the calling
+  written in the file but never read by `Read<T>`/`ReadValue`: typically the calling
   code reads a misspelled keyword. `UnusedKeywords()` returns just the names.
 - `SetWarningsAsErrors(true)` on a dictionary or on the manager turns
   warnings into errors (`SetGrammar` and `CheckUnusedKeywords` then throw).
@@ -486,8 +486,9 @@ returns `std::nullopt` when the key is absent and has no default;
 the key is written in the file; `read(key, out)` requires `out` to have the
 exact type of the key; `read_if(key, out)` assigns `out` only when the key is
 present (or has a default) and returns whether it did, so the value already in
-`out` acts as the default (the legacy `if (CheckOption(k)) Read(k, out);`). `dictionary()` gives access to the underlying
-`Dictionary` (warnings, locations, legacy reads).
+`out` acts as the default (the old `if (CheckOption(k)) Read(k, out);`).
+`dictionary()` gives access to the underlying `Dictionary` (warnings,
+locations).
 
 **References and the manager.** `manager.view<G>(name)` attaches `G` to a
 dictionary once. Later views with the same grammar do not validate again;
@@ -529,18 +530,14 @@ AddKeyWord(DictionaryKeyWord("@SnapshotTimes", VECTOR_MEASURE, "Snapshot times",
 
 // Input:  @FuelVelocity 19.5 cm/s;  @Temperature 25 C;  @SnapshotTimes 1 2 5 min;
 // (values are SI; amounts of substance in kmol, see below)
-double velocity, temperature;            // 0.195 m/s, 298.15 K
-std::vector<double> times;               // 60, 120, 300 s
-dictionary.ReadMeasure("@FuelVelocity", velocity);
-dictionary.ReadMeasure("@Temperature", temperature);
-dictionary.ReadMeasures("@SnapshotTimes", times);
+const auto velocity    = dictionary.Read<double>("@FuelVelocity");            // 0.195 m/s
+const auto temperature = dictionary.Read<double>("@Temperature");             // 298.15 K
+const auto times       = dictionary.Read<std::vector<double>>("@SnapshotTimes"); // 60, 120, 300 s
 ```
 
-- `ReadMeasure(name, value, dimension)` and `ReadMeasures(name, values,
-  dimension)` take the expected dimension explicitly, for grammars that do
-  not declare it. If the grammar does declare one, both must agree.
-- The legacy `ReadMeasure(name, value, units)` is unchanged and returns the
-  raw magnitude and unit string.
+- A measure keyword without a dimension is a record: read it as
+  `Read<std::pair<double, std::string>>` to get the raw magnitude and unit
+  string, and convert it with `units::to_si`.
 - Lists of measures accept pairs (`1 m 20 cm`) or numbers followed by one
   shared unit (`1000 1100 1200 K`).
 - Grammar files declare a dimension with an optional eighth line after the

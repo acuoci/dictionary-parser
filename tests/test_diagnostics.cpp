@@ -191,38 +191,34 @@ TEST_CASE("diagnostics", "value errors point at the offending token") {
   CHECK(std::string(attached.what()).find("      |                ^") !=
         std::string::npos);
 
-  // Found when reading with an explicit dimension (not declared in the grammar).
-  attach(d, {kw("@Values", VECTOR_STRING), kw("@Times", VECTOR_MEASURE),
-             kw("@Pairs", VECTOR_MEASURE)});
-  std::vector<double> values;
-  auto error = catch_error(
-      [&] { d.ReadMeasures("@Times", values, units::dim::Time); });
-  CHECK(error.diagnostics().front().code == DiagnosticCode::InvalidUnit);
-  CHECK(error.diagnostics().front().location.column == 18);
-  CHECK(error.diagnostics().front().location.length == 6);
-
-  error = catch_error(
-      [&] { d.ReadMeasures("@Pairs", values, units::dim::Length); });
-  CHECK(error.diagnostics().front().location.column == 18);
+  // Unit errors point at the unit token.
+  const auto units = catch_error([&] {
+    attach(d, {kw("@Values", VECTOR_STRING),
+               kw("@Times", VECTOR_MEASURE).SetDimension(units::dim::Time),
+               kw("@Pairs", VECTOR_MEASURE).SetDimension(units::dim::Length)});
+  });
+  REQUIRE(units.diagnostics().size() == 2);
+  for (const auto &diagnostic : units.diagnostics()) {
+    CHECK(diagnostic.code == DiagnosticCode::InvalidUnit);
+    CHECK(diagnostic.location.column == 18);
+  }
+  CHECK(units.diagnostics().front().location.length == 6);
 }
 
 TEST_CASE("diagnostics", "programming errors have dedicated codes") {
   auto manager = parse("Dictionary d { @T 300 K; }");
   auto &d = manager("d");
-  double value = 0.0;
-  CHECK(catch_error([&] { d.ReadMeasure("@T", value, units::dim::Temperature); })
+  CHECK(catch_error([&] { (void)d.Read<double>("@T"); })
             .has(DiagnosticCode::NoGrammar));
   attach(d, {kw("@T", SINGLE_MEASURE), kw("@P", SINGLE_MEASURE)});
-  CHECK(catch_error([&] { d.ReadDouble("@Typo", value); })
+  CHECK(catch_error([&] { (void)d.Read<double>("@Typo"); })
             .has(DiagnosticCode::UndeclaredKeyword));
-  CHECK(catch_error([&] { d.ReadDouble("@T", value); })
+  // Without a dimension, a measure is a (value, units) record.
+  CHECK(catch_error([&] { (void)d.Read<double>("@T"); })
             .has(DiagnosticCode::WrongType));
-  const auto missing = catch_error(
-      [&] { d.ReadMeasure("@P", value, units::dim::Pressure); });
+  const auto missing = catch_error([&] { (void)d.Read<double>("@P"); });
   CHECK(missing.has(DiagnosticCode::MissingKeyword));
   CHECK(missing.diagnostics().front().location.line == 1); // dictionary name
-  CHECK(catch_error([&] { d.ReadMeasure("@T", value); })
-            .has(DiagnosticCode::WrongDimension));
 }
 
 TEST_CASE("diagnostics", "grammar incoherence has its own code") {

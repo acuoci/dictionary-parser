@@ -43,6 +43,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <utility>
 
 namespace
 {
@@ -131,59 +133,60 @@ namespace
 		std::string units;
 
 		require_true(dict.CheckOption("@ThreeEquations"), "Missing @ThreeEquations");
-		dict.ReadBool("@ThreeEquations", flag);
+		flag = dict.Read<bool>("@ThreeEquations");
 		require_true(flag, "@ThreeEquations should be true");
 
-		dict.ReadInt("@NucleationModel", integer_value);
+		integer_value = dict.Read<int>("@NucleationModel");
 		require_true(integer_value == 1, "@NucleationModel should be 1");
-		dict.ReadInt("@SurfaceGrowthModel", integer_value);
+		integer_value = dict.Read<int>("@SurfaceGrowthModel");
 		require_true(integer_value == 1, "@SurfaceGrowthModel should be 1");
-		dict.ReadInt("@OxidationModel", integer_value);
+		integer_value = dict.Read<int>("@OxidationModel");
 		require_true(integer_value == 1, "@OxidationModel should be 1");
-		dict.ReadInt("@CondensationModel", integer_value);
+		integer_value = dict.Read<int>("@CondensationModel");
 		require_true(integer_value == 1, "@CondensationModel should be 1");
-		dict.ReadInt("@CoagulationModel", integer_value);
+		integer_value = dict.Read<int>("@CoagulationModel");
 		require_true(integer_value == 1, "@CoagulationModel should be 1");
-		dict.ReadInt("@ThermophoreticModel", integer_value);
+		integer_value = dict.Read<int>("@ThermophoreticModel");
 		require_true(integer_value == 0, "@ThermophoreticModel should be 0");
 
-		dict.ReadString("@DimerModel", text);
+		text = dict.Read<std::string>("@DimerModel");
 		require_true(text == "qssa-rodrigues", "@DimerModel should be qssa-rodrigues");
-		dict.ReadString("@SurfaceChemistryModel", text);
+		text = dict.Read<std::string>("@SurfaceChemistryModel");
 		require_true(text == "HMOM", "@SurfaceChemistryModel should be HMOM");
-		dict.ReadString("@PAH", text);
+		text = dict.Read<std::string>("@PAH");
 		require_true(text == "A2", "@PAH should be A2");
-		dict.ReadString("@GasClosureDummySpecies", text);
+		text = dict.Read<std::string>("@GasClosureDummySpecies");
 		require_true(text == "CSOOT", "@GasClosureDummySpecies should be CSOOT");
 
-		dict.ReadMeasure("@SootDensity", double_value, units);
+		std::tie(double_value, units) =
+			dict.Read<std::pair<double, std::string>>("@SootDensity");
 		require_close(double_value, 1800.0, "@SootDensity");
 		require_true(units == "kg/m3", "@SootDensity units should be kg/m3");
 
-		dict.ReadString("@StickingCoefficientModel", text);
+		text = dict.Read<std::string>("@StickingCoefficientModel");
 		require_true(text == "constant", "@StickingCoefficientModel should be constant");
-		dict.ReadDouble("@StickingCoefficientConstant", double_value);
+		double_value = dict.Read<double>("@StickingCoefficientConstant");
 		require_close(double_value, 2.e-3, "@StickingCoefficientConstant");
 
-		dict.ReadBool("@SimplifiedPAHMass", flag);
+		flag = dict.Read<bool>("@SimplifiedPAHMass");
 		require_true(flag, "@SimplifiedPAHMass should be true");
-		dict.ReadBool("@GasConsumption", flag);
+		flag = dict.Read<bool>("@GasConsumption");
 		require_true(!flag, "@GasConsumption should be false");
-		dict.ReadBool("@RadiativeHeatTransfer", flag);
+		flag = dict.Read<bool>("@RadiativeHeatTransfer");
 		require_true(flag, "@RadiativeHeatTransfer should be true");
-		dict.ReadString("@PlanckCoefficient", text);
+		text = dict.Read<std::string>("@PlanckCoefficient");
 		require_true(text == "Smooke", "@PlanckCoefficient should be Smooke");
-		dict.ReadDouble("@SchmidtNumber", double_value);
+		double_value = dict.Read<double>("@SchmidtNumber");
 		require_close(double_value, 50.0, "@SchmidtNumber");
 
-		dict.ReadDouble("@epsNucleation", double_value);
+		double_value = dict.Read<double>("@epsNucleation");
 		require_close(double_value, 2.2, "@epsNucleation");
-		dict.ReadDouble("@epsCondensation", double_value);
+		double_value = dict.Read<double>("@epsCondensation");
 		require_close(double_value, 1.3, "@epsCondensation");
-		dict.ReadDouble("@epsCoagulation", double_value);
+		double_value = dict.Read<double>("@epsCoagulation");
 		require_close(double_value, 2.2, "@epsCoagulation");
 
-		dict.ReadBool("@DebugMode", flag);
+		flag = dict.Read<bool>("@DebugMode");
 		require_true(!flag, "@DebugMode should be false");
 	}
 }

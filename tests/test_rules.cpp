@@ -325,23 +325,13 @@ TEST_CASE("semantics", "defaults are returned when the keyword is absent") {
              kw("@Model", SINGLE_STRING).SetDefault("HMOM"),
              kw("@Moles", VECTOR_STRING_DOUBLE).SetDefault("N2 0.79 O2 0.21"),
              kw("@Title", SINGLE_STRING).SetDefault("\"my flame\"")});
-  double value = 0.0;
-  d.ReadDouble("@Schmidt", value);
-  CHECK(value == 40.0); // file value wins
-  d.ReadMeasure("@Density", value);
-  CHECK(std::abs(value - 1800.0) < 1e-9);
-  bool flag = true;
-  d.ReadBool("@Debug", flag);
-  CHECK(!flag);
-  std::string text;
-  d.ReadString("@Model", text);
-  CHECK(text == "HMOM");
-  d.ReadString("@Title", text);
-  CHECK(text == "my flame");
-  std::vector<std::string> names;
-  std::vector<double> values;
-  d.ReadOption("@Moles", names, values);
-  CHECK(names == (std::vector<std::string>{"N2", "O2"}));
+  CHECK(d.Read<double>("@Schmidt") == 40.0); // file value wins
+  CHECK(std::abs(d.Read<double>("@Density") - 1800.0) < 1e-9);
+  CHECK(!d.Read<bool>("@Debug"));
+  CHECK(d.Read<std::string>("@Model") == "HMOM");
+  CHECK(d.Read<std::string>("@Title") == "my flame");
+  using Pairs = std::vector<std::pair<std::string, double>>;
+  CHECK(d.Read<Pairs>("@Moles") == (Pairs{{"N2", 0.79}, {"O2", 0.21}}));
   CHECK(!d.CheckOption("@Density")); // only what is written in the file
   CHECK(d.CheckOption("@Schmidt"));
   CHECK(d.entries().back().from_default);
@@ -478,9 +468,8 @@ TEST_CASE("semantics", "keywords never read are reported") {
   attach(d, {kw("@A", SINGLE_INT), kw("@B", SINGLE_INT), kw("@C", SINGLE_INT),
              kw("@D", SINGLE_INT).SetDefault("4")});
   attach(manager("e"), {kw("@X", SINGLE_INT)});
-  int value = 0;
-  d.ReadInt("@A", value);
-  d.ReadInt("@D", value); // default: never "unused"
+  (void)d.Read<int>("@A");
+  (void)d.Read<int>("@D"); // default: never "unused"
   (void)d.CheckOption("@B"); // a presence test is not a read
   CHECK(d.UnusedKeywords() == (std::vector<std::string>{"@B", "@C"}));
 
@@ -578,9 +567,7 @@ TEST_CASE("semantics", "grammar files declare properties and rules") {
 
   auto good = parse("Dictionary d { @Profile 0.5 0.5; }");
   good("d").SetGrammar(file.string());
-  std::string model;
-  good("d").ReadString("@Model", model);
-  CHECK(model == "Constant");
+  CHECK(good("d").Read<std::string>("@Model") == "Constant");
 
   auto bad = parse("Dictionary d { @Profile 0.6 0; }");
   const auto range = catch_error([&] { bad("d").SetGrammar(file.string()); });

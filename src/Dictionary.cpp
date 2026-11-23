@@ -35,36 +35,17 @@
 
 #include "Dictionary.h"
 #include "DictionaryLexer.h"
-#include "DictionaryUnits.h"
 #include "DictionaryValues.h"
 
 #include <algorithm>
-#include <charconv>
-#include <cmath>
 #include <iterator>
 #include <ostream>
-#include <stdexcept>
-#include <system_error>
-#include <type_traits>
 #include <utility>
 
 namespace OpenSMOKEpp {
 namespace {
 constexpr std::size_t npos_index = static_cast<std::size_t>(-1);
 
-[[nodiscard]] auto parse_char_token(const std::string_view token,
-                                    char &value) noexcept -> bool {
-  if (token.size() != 1)
-    return false;
-  value = token.front();
-  return true;
-}
-
-using detail::is_number;
-using detail::parse_bool_token;
-using detail::parse_number;
-using detail::quote;
-using detail::split_measures;
 } // namespace
 
 auto Dictionary::Context() const -> std::string {
@@ -381,54 +362,6 @@ bool Dictionary::CheckOption(std::string_view name_of_keyword) const {
   return IndexOf(name_of_keyword) != npos_index;
 }
 
-auto Dictionary::Lookup(std::string_view name_of_keyword,
-                        const DictionaryKeyWordTypes expected_type,
-                        std::size_t &index) const
-    -> std::optional<ParseError> {
-  const std::string keyword(name_of_keyword);
-  if (!has_grammar_)
-    return ParseError{ParseErrorCode::NoGrammar,
-                      "cannot read keyword " + keyword +
-                          ": no grammar is attached to this dictionary (call "
-                          "SetGrammar() before reading)",
-                      0};
-
-  const DictionaryKeyWord *declared = grammar_.FindKeyWord(name_of_keyword);
-  if (declared == nullptr)
-    return ParseError{ParseErrorCode::UndeclaredKeyword,
-                      "the keyword " + keyword +
-                          " is not declared in the grammar of this "
-                          "dictionary (check the keyword name in the calling "
-                          "code)",
-                      0};
-
-  if (declared->type() != expected_type)
-    return ParseError{
-        ParseErrorCode::WrongType,
-        "the keyword " + keyword + " is declared as '" +
-            std::string(keyword_type_name(declared->type())) +
-            "' in the grammar (read it with " +
-            std::string(keyword_type_reader(declared->type())) +
-            "), but it was read as '" +
-            std::string(keyword_type_name(expected_type)) + "'",
-        0};
-
-  std::size_t found = IndexOf(name_of_keyword);
-  if (found == npos_index)
-    for (std::size_t i = 0; i < entries_.size(); ++i)
-      if (entries_[i].from_default && entries_[i].keyword == name_of_keyword)
-        found = i;
-  if (found == npos_index)
-    return ParseError{ParseErrorCode::MissingKeyword,
-                      "the required keyword " + keyword +
-                          " is not present in the dictionary",
-                      0};
-
-  used_.insert(keyword);
-  index = found;
-  return std::nullopt;
-}
-
 void Dictionary::FailLookup(std::string_view name_of_keyword,
                             const ParseError &error) const {
   DiagnosticCode code = DiagnosticCode::Other;
@@ -448,24 +381,40 @@ void Dictionary::FailLookup(std::string_view name_of_keyword,
   Fail({Diagnostic{Severity::Error, code, where, error.message, {}, {}}});
 }
 
-std::size_t
-Dictionary::CheckOption(std::string_view name_of_keyword,
-                        const DictionaryKeyWordTypes expected_type) const {
-  std::size_t index = 0;
-  if (const auto error = Lookup(name_of_keyword, expected_type, index))
-    FailLookup(name_of_keyword, *error);
-  return index;
-}
-
 auto Dictionary::LookupAny(std::string_view name_of_keyword,
                            std::size_t &index) const
     -> std::optional<ParseError> {
-  const DictionaryKeyWord *declared = has_grammar_
-                                          ? grammar_.FindKeyWord(name_of_keyword)
-                                          : nullptr;
-  // Delegate to the typed lookup with the declared type: same messages.
-  return Lookup(name_of_keyword, declared != nullptr ? declared->type() : NONE,
-                index);
+  const std::string keyword(name_of_keyword);
+  if (!has_grammar_)
+    return ParseError{ParseErrorCode::NoGrammar,
+                      "cannot read keyword " + keyword +
+                          ": no grammar is attached to this dictionary (call "
+                          "SetGrammar() before reading)",
+                      0};
+
+  const DictionaryKeyWord *declared = grammar_.FindKeyWord(name_of_keyword);
+  if (declared == nullptr)
+    return ParseError{ParseErrorCode::UndeclaredKeyword,
+                      "the keyword " + keyword +
+                          " is not declared in the grammar of this "
+                          "dictionary (check the keyword name in the calling "
+                          "code)",
+                      0};
+
+  std::size_t found = IndexOf(name_of_keyword);
+  if (found == npos_index)
+    for (std::size_t i = 0; i < entries_.size(); ++i)
+      if (entries_[i].from_default && entries_[i].keyword == name_of_keyword)
+        found = i;
+  if (found == npos_index)
+    return ParseError{ParseErrorCode::MissingKeyword,
+                      "the required keyword " + keyword +
+                          " is not present in the dictionary",
+                      0};
+
+  used_.insert(keyword);
+  index = found;
+  return std::nullopt;
 }
 
 Value Dictionary::ReadValue(std::string_view name_of_keyword) {
@@ -520,385 +469,5 @@ auto Dictionary::ToParseError(const DictionaryError &error) -> ParseError {
   }
   return ParseError{code, d.message, d.location.line, d.location.column};
 }
-
-auto Dictionary::TryReadDouble(std::string_view name_of_keyword)
-    -> ParseResult<double> {
-  std::size_t index = 0;
-  if (auto error = Lookup(name_of_keyword, SINGLE_DOUBLE, index))
-    return ParseResult<double>::Failure(std::move(*error));
-
-  const auto &tokens = entries_[index].values;
-  if (tokens.size() != 1)
-    return ParseResult<double>::Failure(ParseError{
-        ParseErrorCode::BadTokenCount,
-        "the keyword " + std::string(name_of_keyword) +
-            " requires exactly one number (double), but " +
-            std::to_string(tokens.size()) + " values were given",
-        entries_[index].first_line, entries_[index].column});
-
-  double value = 0.0;
-  if (!parse_number(tokens[0], value))
-    return ParseResult<double>::Failure(
-        ParseError{ParseErrorCode::BadNumber,
-                   "the keyword " + std::string(name_of_keyword) +
-                       " requires a finite number (double), but " +
-                       quote(tokens[0]) + " was given",
-                   entries_[index].first_line,
-                   entries_[index].tokens.empty()
-                       ? entries_[index].column
-                       : entries_[index].tokens[0].column});
-
-  return ParseResult<double>::Success(value);
-}
-
-void Dictionary::ReadDouble(std::string_view name_of_keyword, double &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_DOUBLE);
-  const auto result = TryReadDouble(name_of_keyword);
-  if (!result) {
-    const ParseError &error = result.error();
-    const std::size_t token =
-        error.code == ParseErrorCode::BadNumber ? 0 : npos_index;
-    std::string message = error.message;
-    const std::string prefix = "the keyword " + entries_[index].keyword + " ";
-    if (message.starts_with(prefix))
-      message = message.substr(prefix.size());
-    EntryError(index, message, token);
-  }
-  value = result.value();
-}
-
-void Dictionary::ReadMeasure(std::string_view name_of_keyword, double &value,
-                             std::string &units) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_MEASURE);
-  const auto &tokens = entries_[index].values;
-  if (tokens.size() != 2)
-    EntryError(index, "a measure requires exactly two values (number and "
-                      "units, e.g. '300 K'), but " +
-                          std::to_string(tokens.size()) + " were given");
-  if (!parse_number(tokens[0], value))
-    EntryError(index,
-               "the magnitude of a measure must be a finite number, "
-               "but " +
-                   quote(tokens[0]) + " was given",
-               0);
-  units = tokens[1];
-}
-
-void Dictionary::ReadInt(std::string_view name_of_keyword, int &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_INT);
-  const auto &tokens = entries_[index].values;
-  if (tokens.size() != 1)
-    EntryError(index, "exactly one integer is required, but " +
-                          std::to_string(tokens.size()) + " values were given");
-  if (!parse_number(tokens[0], value))
-    EntryError(index,
-               "an integer is required, but " + quote(tokens[0]) + " was given",
-               0);
-}
-
-void Dictionary::ReadPath(std::string_view name_of_keyword,
-                          std::filesystem::path &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_PATH);
-  const auto &tokens = entries_[index].values;
-  if (tokens.empty())
-    EntryError(index, "a path is required, but no value was given");
-  if (tokens.size() == 1) {
-    value = std::filesystem::path(tokens[0]);
-    return;
-  }
-  std::string joined;
-  for (const auto &token : tokens) {
-    if (!joined.empty())
-      joined += ' ';
-    joined += token;
-  }
-  value = std::filesystem::path(joined);
-}
-
-void Dictionary::ReadDictionary(std::string_view name_of_keyword,
-                                std::string &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_DICTIONARY);
-  const auto &tokens = entries_[index].values;
-  if (tokens.size() != 1)
-    EntryError(index, "exactly one dictionary name is required, but " +
-                          std::to_string(tokens.size()) + " values were given");
-  value = tokens[0];
-}
-
-void Dictionary::ReadSequence(std::string_view name_of_keyword,
-                              std::string &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SEQUENCE_STRING);
-  value = entries_[index].option;
-}
-
-void Dictionary::ReadBool(std::string_view name_of_keyword, bool &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_BOOL);
-  const auto &tokens = entries_[index].values;
-  if (tokens.size() != 1)
-    EntryError(index, "exactly one boolean (true/false/on/off) is required, "
-                      "but " +
-                          std::to_string(tokens.size()) + " values were given");
-  if (!parse_bool_token(tokens[0], value))
-    EntryError(index,
-               "a boolean (true/false/on/off) is required, but " +
-                   quote(tokens[0]) + " was given",
-               0);
-}
-
-void Dictionary::ReadChar(std::string_view name_of_keyword, char &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_CHAR);
-  const auto &tokens = entries_[index].values;
-  if (tokens.size() != 1)
-    EntryError(index, "exactly one character is required, but " +
-                          std::to_string(tokens.size()) + " values were given");
-  if (!parse_char_token(tokens[0], value))
-    EntryError(index,
-               "a single character is required, but " + quote(tokens[0]) +
-                   " was given",
-               0);
-}
-
-void Dictionary::ReadString(std::string_view name_of_keyword,
-                            std::string &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_STRING);
-  const auto &tokens = entries_[index].values;
-  if (tokens.size() != 1)
-    EntryError(index, "exactly one string is required (use quotes for text "
-                      "containing blanks), but " +
-                          std::to_string(tokens.size()) + " values were given");
-  value = tokens[0];
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<std::string> &values) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_STRING);
-  const auto &tokens = entries_[index].values;
-  if (tokens.empty())
-    EntryError(index, "a list of strings is required, but no value was given");
-  values = tokens;
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<double> &values) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_DOUBLE);
-  const auto &tokens = entries_[index].values;
-  if (tokens.empty())
-    EntryError(index,
-               "a list of numbers (double) is required, but no value was given");
-  values.resize(tokens.size());
-  for (std::size_t i = 0; i < tokens.size(); ++i)
-    if (!parse_number(tokens[i], values[i]))
-      EntryError(index, "value " + std::to_string(i + 1) +
-                            " must be a finite number (double), but " +
-                            quote(tokens[i]) + " was given", i);
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<int> &values) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_INT);
-  const auto &tokens = entries_[index].values;
-  if (tokens.empty())
-    EntryError(index, "a list of integers is required, but no value was given");
-  values.resize(tokens.size());
-  for (std::size_t i = 0; i < tokens.size(); ++i)
-    if (!parse_number(tokens[i], values[i]))
-      EntryError(index, "value " + std::to_string(i + 1) +
-                            " must be an integer, but " + quote(tokens[i]) +
-                            " was given", i);
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<char> &values) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_CHAR);
-  const auto &tokens = entries_[index].values;
-  if (tokens.empty())
-    EntryError(index,
-               "a list of characters is required, but no value was given");
-  values.resize(tokens.size());
-  for (std::size_t i = 0; i < tokens.size(); ++i)
-    if (!parse_char_token(tokens[i], values[i]))
-      EntryError(index, "value " + std::to_string(i + 1) +
-                            " must be a single character, but " +
-                            quote(tokens[i]) + " was given", i);
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            BoolVector &values) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_BOOL);
-  const auto &tokens = entries_[index].values;
-  if (tokens.empty())
-    EntryError(index, "a list of booleans is required, but no value was given");
-  values.clear();
-  values.reserve(tokens.size());
-  for (std::size_t i = 0; i < tokens.size(); ++i) {
-    bool flag = false;
-    if (!parse_bool_token(tokens[i], flag))
-      EntryError(index, "value " + std::to_string(i + 1) +
-                            " must be a boolean (true/false/on/off), but " +
-                            quote(tokens[i]) + " was given", i);
-    values.push_back(flag ? 1U : 0U);
-  }
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<bool> &values) {
-  BoolVector bytes;
-  ReadOption(name_of_keyword, bytes);
-  values.clear();
-  values.reserve(bytes.size());
-  std::transform(bytes.begin(), bytes.end(), std::back_inserter(values),
-                 [](const std::uint8_t value) { return value != 0U; });
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<std::string> &names,
-                            std::vector<double> &values) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_STRING_DOUBLE);
-  const auto &tokens = entries_[index].values;
-  const std::size_t n = tokens.size();
-  if (n == 0 || n % 2 != 0)
-    EntryError(index, "pairs of a name and a number (double) are required, "
-                      "e.g. 'CH4 0.5 O2 0.5', but " +
-                          std::to_string(n) + " values were given");
-  names.resize(n / 2);
-  values.resize(n / 2);
-  for (std::size_t i = 0; i < n; i += 2) {
-    names[i / 2] = tokens[i];
-    if (!parse_number(tokens[i + 1], values[i / 2]))
-      EntryError(index,
-                 "the value paired with " + quote(tokens[i]) +
-                     " must be a finite number (double), but " +
-                     quote(tokens[i + 1]) + " was given",
-                 i + 1);
-  }
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<int> &values,
-                            std::vector<std::string> &names) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_INT_STRING);
-  const auto &tokens = entries_[index].values;
-  const std::size_t n = tokens.size();
-  if (n == 0 || n % 2 != 0)
-    EntryError(index, "pairs of an integer and a name are required, but " +
-                          std::to_string(n) + " values were given");
-  names.resize(n / 2);
-  values.resize(n / 2);
-  for (std::size_t i = 0; i < n; i += 2) {
-    if (!parse_number(tokens[i], values[i / 2]))
-      EntryError(index,
-                 "pair " + std::to_string(i / 2 + 1) +
-                     " must start with an integer, but " + quote(tokens[i]) +
-                     " was given",
-                 i);
-    names[i / 2] = tokens[i + 1];
-  }
-}
-
-void Dictionary::ReadOption(std::string_view name_of_keyword,
-                            std::vector<double> &values,
-                            std::vector<std::string> &names) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_MEASURE);
-  if (const auto error = split_measures(entries_[index].values, values, names))
-    EntryError(index, *error);
-}
-
-auto Dictionary::ResolveDimension(std::string_view name_of_keyword,
-                                  const units::Dimension *expected) const
-    -> units::Dimension {
-  const DictionaryKeyWord *declared = grammar_.FindKeyWord(name_of_keyword);
-  const auto &grammar_dimension = declared->dimension();
-  if (grammar_dimension && expected != nullptr) {
-    if (!(*grammar_dimension == *expected) ||
-        grammar_dimension->temperature_difference !=
-            expected->temperature_difference)
-      ErrorMessage("the keyword " + std::string(name_of_keyword) +
-                   " is declared with dimension " +
-                   units::describe(*grammar_dimension) +
-                   " in the grammar, but it was read as " +
-                   units::describe(*expected),
-               DiagnosticCode::WrongDimension);
-    return *grammar_dimension;
-  }
-  if (grammar_dimension)
-    return *grammar_dimension;
-  if (expected != nullptr)
-    return *expected;
-  ErrorMessage("the keyword " + std::string(name_of_keyword) +
-               " declares no dimension in the grammar: declare it with "
-               "DictionaryKeyWord::SetDimension() (or a 'dimension:' line in a "
-               "grammar file), or pass the expected dimension to the read "
-               "function",
-               DiagnosticCode::WrongDimension);
-}
-
-void Dictionary::ReadMeasure(std::string_view name_of_keyword, double &value) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_MEASURE);
-  const units::Dimension dimension = ResolveDimension(name_of_keyword, nullptr);
-  double magnitude = 0.0;
-  std::string unit;
-  ReadMeasure(name_of_keyword, magnitude, unit);
-  try {
-    value = units::to_si(magnitude, unit, dimension, unit_system_);
-  } catch (const units::UnitError &error) {
-    EntryError(index, error.what(), 1, DiagnosticCode::InvalidUnit);
-  }
-}
-
-void Dictionary::ReadMeasure(std::string_view name_of_keyword, double &value,
-                             const units::Dimension &expected) {
-  const std::size_t index = CheckOption(name_of_keyword, SINGLE_MEASURE);
-  const units::Dimension dimension =
-      ResolveDimension(name_of_keyword, &expected);
-  double magnitude = 0.0;
-  std::string unit;
-  ReadMeasure(name_of_keyword, magnitude, unit);
-  try {
-    value = units::to_si(magnitude, unit, dimension, unit_system_);
-  } catch (const units::UnitError &error) {
-    EntryError(index, error.what(), 1, DiagnosticCode::InvalidUnit);
-  }
-}
-
-void Dictionary::ReadMeasures(std::string_view name_of_keyword,
-                              std::vector<double> &values) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_MEASURE);
-  const units::Dimension dimension = ResolveDimension(name_of_keyword, nullptr);
-  std::vector<std::string> unit_names;
-  ReadOption(name_of_keyword, values, unit_names);
-  const bool shared = values.size() + 1 == entries_[index].values.size();
-  for (std::size_t i = 0; i < values.size(); ++i) {
-    try {
-      values[i] =
-          units::to_si(values[i], unit_names[i], dimension, unit_system_);
-    } catch (const units::UnitError &error) {
-      EntryError(index, error.what(),
-                 shared ? entries_[index].values.size() - 1 : 2 * i + 1,
-                 DiagnosticCode::InvalidUnit);
-    }
-  }
-}
-
-void Dictionary::ReadMeasures(std::string_view name_of_keyword,
-                              std::vector<double> &values,
-                              const units::Dimension &expected) {
-  const std::size_t index = CheckOption(name_of_keyword, VECTOR_MEASURE);
-  const units::Dimension dimension =
-      ResolveDimension(name_of_keyword, &expected);
-  std::vector<std::string> unit_names;
-  ReadOption(name_of_keyword, values, unit_names);
-  const bool shared = values.size() + 1 == entries_[index].values.size();
-  for (std::size_t i = 0; i < values.size(); ++i) {
-    try {
-      values[i] =
-          units::to_si(values[i], unit_names[i], dimension, unit_system_);
-    } catch (const units::UnitError &error) {
-      EntryError(index, error.what(),
-                 shared ? entries_[index].values.size() - 1 : 2 * i + 1,
-                 DiagnosticCode::InvalidUnit);
-    }
-  }
-}
-
 
 } // namespace OpenSMOKEpp

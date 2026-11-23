@@ -372,7 +372,7 @@ TEST_CASE("typed", "shape mismatches are explicit") {
                     "expected a sequence of 2 items");
 }
 
-TEST_CASE("typed", "TryRead<T> and legacy readers on structured keywords") {
+TEST_CASE("typed", "TryRead<T> error codes") {
   auto manager = parse("Dictionary d { @N 1; @S CVODE; }");
   auto &d = manager("d");
   CHECK(d.TryRead<int>("@N").error().code == Dictionary::ParseErrorCode::NoGrammar);
@@ -385,10 +385,6 @@ TEST_CASE("typed", "TryRead<T> and legacy readers on structured keywords") {
         Dictionary::ParseErrorCode::MissingKeyword);
   CHECK(d.TryRead<std::string>("@N").error().code ==
         Dictionary::ParseErrorCode::WrongType);
-  std::string text;
-  CHECK_THROWS_WITH(d.ReadString("@S", text),
-                    "is declared as 'structured' in the grammar (read it with "
-                    "Read<T> or ReadValue)");
 }
 
 TEST_CASE("typed", "ReadValue and usage tracking") {

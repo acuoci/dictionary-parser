@@ -151,8 +151,6 @@ enum class DiagnosticCode {
   WrongType,
   /** \brief A keyword read by the calling code is absent. */
   MissingKeyword,
-  /** \brief The calling code and the grammar disagree on a dimension. */
-  WrongDimension,
   /** \brief The grammar itself is incoherent. */
   GrammarIncoherent,
   /** \brief A counting rule (`exactly`, `at least`, `at most`) is violated. */

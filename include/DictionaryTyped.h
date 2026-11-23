@@ -1481,7 +1481,7 @@ public:
     return dictionary_->CheckOption(key.name());
   }
 
-  /** \brief The underlying dictionary (legacy API, locations, warnings). */
+  /** \brief The underlying dictionary (locations, warnings). */
   [[nodiscard]] auto dictionary() const -> Dictionary & { return *dictionary_; }
 
   /** \brief The dictionary name. */

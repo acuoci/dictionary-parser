@@ -51,8 +51,8 @@ namespace OpenSMOKEpp {
 /**
  * \brief Enumerates supported dictionary keyword value types.
  *
- * The type controls which `Dictionary::Read*` overload can legally read a
- * keyword after grammar validation.
+ * The type selects the value format used to validate and read a keyword
+ * (`Dictionary::Read<T>`, `Dictionary::ReadValue`).
  */
 enum DictionaryKeyWordTypes {
   /** \brief No value type. */
@@ -102,15 +102,6 @@ enum DictionaryKeyWordTypes {
  * \return Token such as `single_double`, or `unknown` for invalid values.
  */
 [[nodiscard]] auto keyword_type_name(DictionaryKeyWordTypes type) noexcept
-    -> std::string_view;
-
-/**
- * \brief Returns the `Dictionary` member function that reads a type.
- *
- * \param[in] type Keyword type.
- * \return Function description such as `ReadDouble`, used in diagnostics.
- */
-[[nodiscard]] auto keyword_type_reader(DictionaryKeyWordTypes type) noexcept
     -> std::string_view;
 
 /**
@@ -225,8 +216,8 @@ public:
    * Only `SINGLE_MEASURE` and `VECTOR_MEASURE` keywords can carry a
    * dimension. When a dimension is declared, the units written in the input
    * file are validated when the grammar is attached, and
-   * `Dictionary::ReadMeasure(name, value)` / `Dictionary::ReadMeasures`
-   * return values converted to SI.
+   * `Dictionary::Read<double>` / `Read<std::vector<double>>` return values
+   * converted to SI.
    *
    * \code
    * AddKeyWord(DictionaryKeyWord("@FuelVelocity", SINGLE_MEASURE,
@@ -267,8 +258,8 @@ public:
    *
    * The default is written as in an input file (`"1800 kg/m3"`, `"true"`,
    * `"CH4 0.5 O2 0.5"`) and is validated against the type, the dimension and
-   * the constraints of the keyword when the grammar is built. `Read*`
-   * functions return it when the keyword is not in the file;
+   * the constraints of the keyword when the grammar is built. `Read<T>`
+   * returns it when the keyword is not in the file;
    * `Dictionary::CheckOption` still reports only what is written in the file.
    * A compulsory keyword cannot have a default.
    *

@@ -93,12 +93,9 @@ TEST_CASE("syntax", "URLs and double slashes inside values") {
                        "}\n");
   auto &d = manager("d");
   attach(d, {kw("@Url", SINGLE_STRING), kw("@Path", SINGLE_PATH)});
-  std::string url;
-  d.ReadString("@Url", url);
-  CHECK(url == "http://www.opensmoke.polimi.it/");
-  std::filesystem::path path;
-  d.ReadPath("@Path", path);
-  CHECK(path == std::filesystem::path("../kinetics//POLIMI.CKI"));
+  CHECK(d.Read<std::string>("@Url") == "http://www.opensmoke.polimi.it/");
+  CHECK(std::filesystem::path(d.Read<std::string>("@Path")) ==
+        std::filesystem::path("../kinetics//POLIMI.CKI"));
 }
 
 // ---------------------------------------------------------------------------
@@ -114,27 +111,21 @@ TEST_CASE("syntax", "quoted strings with blanks and special characters") {
   auto &d = manager("d");
   attach(d, {kw("@Title", SINGLE_STRING), kw("@Output", SINGLE_PATH),
              kw("@Species", VECTOR_STRING), kw("@Comments", SEQUENCE_STRING)});
-  std::string title;
-  d.ReadString("@Title", title);
-  CHECK(title == "Flame #1; @ 1 atm { lean }");
-  std::filesystem::path output;
-  d.ReadPath("@Output", output);
-  CHECK(output.string() == "my results/run  01");
-  std::vector<std::string> species;
-  d.ReadOption("@Species", species);
-  CHECK(species == (std::vector<std::string>{"A B", "C"}));
-  std::string sequence;
-  d.ReadSequence("@Comments", sequence);
-  CHECK(sequence == "first \"second item\" third");
+  CHECK(d.Read<std::string>("@Title") == "Flame #1; @ 1 atm { lean }");
+  CHECK(d.Read<std::string>("@Output") == "my results/run  01");
+  CHECK(d.Read<std::vector<std::string>>("@Species") ==
+        (std::vector<std::string>{"A B", "C"}));
+  // A sequence is read as text: tokens joined by one blank, quotes removed.
+  // The raw text stays available in the entry.
+  CHECK(d.Read<std::string>("@Comments") == "first second item third");
+  CHECK(d.entries().back().option == "first \"second item\" third");
 }
 
 TEST_CASE("syntax", "unquoted multi-token path keeps the legacy behavior") {
   auto manager = parse("Dictionary d\n{\n@Path my   output dir;\n}\n");
   auto &d = manager("d");
   attach(d, {kw("@Path", SINGLE_PATH)});
-  std::filesystem::path path;
-  d.ReadPath("@Path", path);
-  CHECK(path.string() == "my output dir");
+  CHECK(d.Read<std::string>("@Path") == "my output dir");
 }
 
 // ---------------------------------------------------------------------------
@@ -175,17 +166,13 @@ TEST_CASE("syntax", "inline dictionaries are named parent/Keyword") {
   attach(main, {kw("@EndTime", SINGLE_MEASURE),
                 kw("@InitialStatus", SINGLE_DICTIONARY, true),
                 kw("@Options", SINGLE_DICTIONARY)});
-  std::string name;
-  main.ReadDictionary("@InitialStatus", name);
+  const auto name = main.Read<std::string>("@InitialStatus");
   CHECK(name == "BatchReactor/InitialStatus");
   auto &status = manager(name);
   attach(status, {kw("@Temperature", SINGLE_MEASURE),
                   kw("@Moles", SINGLE_DICTIONARY)});
-  double value = 0;
-  std::string units;
-  status.ReadMeasure("@Temperature", value, units);
-  CHECK(value == 1000.0);
-  CHECK(units == "K");
+  CHECK((status.Read<std::pair<double, std::string>>("@Temperature") ==
+        (std::pair<double, std::string>{1000.0, "K"})));
 }
 
 TEST_CASE("syntax", "inline and explicit dictionary with the same name") {

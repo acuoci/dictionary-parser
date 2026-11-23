@@ -117,7 +117,7 @@ struct ParsedSource {
  * \endcode
  * An inline block attached to keyword `@Key` inside dictionary `parent`
  * becomes a dictionary named `parent/Key`, and the entry value is that
- * name, so it is read with `Dictionary::ReadDictionary` like any reference.
+ * name, so it is read like any reference to a dictionary.
  *
  * \param[in] source Shared source file (name and text).
  * \return Parsed dictionaries and include directives.
