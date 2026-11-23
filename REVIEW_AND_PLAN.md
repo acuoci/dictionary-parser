@@ -12,6 +12,15 @@ Scope of the study:
 
 ## 0. Progress log
 
+### Measures whose dimension is given at run time (branch `feature/phase6`, 2026-11-23)
+
+OpenSMOKE++2 had its own helpers for values whose dimension depends on another keyword (parametric analyses, profiles) and for lists whose units were optional. They are replaced by library features, and units are always compulsory:
+- `formats::Quantity()` / `QuantityList()` and the typed `Quantity()` / `QuantityList()`: the dimension is given when the value is read (`Dictionary::ReadValue(name, dimension)`, `Read<T>(name, dimension)`, `View::get(key, dimension)`, `get_if(key, dimension)`), also inside lists, records and choices (`ValueFormat::WithDimension`). The grammar checks that the units are valid units of some dimension; the read checks the dimension, with errors located at the units. `View::get(key)` on such a key does not compile (new compile-fail test).
+- `formats::Unit()` / typed `Unit()`: one units token, checked when the grammar is attached; `typed::Units::to_si(value, dimension)` converts values, with an error located at the keyword.
+- `formats::Composition(dimension)` / typed `Composition(dim)`: name–number pairs followed by their units, converted to SI.
+
+Verification: 31/31 CTest targets (Clang and GCC 16), with new runtime tests in the `frontend` suite.
+
 ### Legacy reading API removed (branch `feature/phase6`, 2026-11-23)
 
 OpenSMOKE++2 and MOM now read every dictionary through typed grammars and views, so the out-parameter readers were removed from `Dictionary` (§4.8 planned to deprecate them at the end of the migration; nothing built uses them any more):

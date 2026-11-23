@@ -75,6 +75,7 @@ constexpr std::size_t unlimited = std::numeric_limits<std::size_t>::max();
   case ValueFormat::Kind::QuantityList: return "list of measures";
   case ValueFormat::Kind::Table: return "table";
   case ValueFormat::Kind::Choice: return "choice";
+  case ValueFormat::Kind::Unit: return "units";
   }
   return "format";
 }
@@ -92,6 +93,8 @@ struct ValueFormat::Node {
   std::optional<Bound> maximum;
   std::size_t min_size = 0;
   std::size_t max_size = unlimited;
+  bool runtime_dimension = false; // Quantity(), QuantityList(): dimension set when read
+  bool trailing_unit = false;     // Composition(dimension): pairs, then one unit
   std::vector<std::string> errors; // misuse of modifiers
 };
 
@@ -130,6 +133,42 @@ auto ValueFormat::maximum() const noexcept -> const std::optional<Bound> & {
 }
 std::size_t ValueFormat::min_size() const noexcept { return node_->min_size; }
 std::size_t ValueFormat::max_size() const noexcept { return node_->max_size; }
+bool ValueFormat::runtime_dimension() const noexcept {
+  return node_->runtime_dimension;
+}
+
+bool ValueFormat::trailing_unit() const noexcept { return node_->trailing_unit; }
+
+bool ValueFormat::needs_dimension() const {
+  if (node_->runtime_dimension)
+    return true;
+  for (const auto &field : node_->fields)
+    if (field.format.needs_dimension())
+      return true;
+  if (node_->element && node_->element->needs_dimension())
+    return true;
+  for (const auto &alternative : node_->alternatives)
+    if (alternative.needs_dimension())
+      return true;
+  return false;
+}
+
+ValueFormat ValueFormat::WithDimension(const units::Dimension &dimension) const {
+  if (!needs_dimension())
+    return *this;
+  auto node = std::make_shared<Node>(*node_);
+  if (node->runtime_dimension) {
+    node->dimension = dimension;
+    node->runtime_dimension = false;
+  }
+  for (auto &field : node->fields)
+    field.format = field.format.WithDimension(dimension);
+  if (node->element)
+    node->element = node->element->WithDimension(dimension);
+  for (auto &alternative : node->alternatives)
+    alternative = alternative.WithDimension(dimension);
+  return ValueFormat(std::move(node));
+}
 
 namespace {
 [[nodiscard]] auto make(ValueFormat::Kind kind) -> std::shared_ptr<ValueFormat::Node> {
@@ -218,6 +257,7 @@ auto ValueFormat::width() const -> std::optional<std::size_t> {
   case Kind::Boolean:
   case Kind::Word:
   case Kind::Enumeration:
+  case Kind::Unit:
     return 1;
   case Kind::Quantity:
     return 2;
@@ -287,6 +327,9 @@ auto ValueFormat::describe(const units::UnitSystem &system) const -> std::string
   case Kind::Quantity:
     return node_->dimension ? units::describe(*node_->dimension, system) + bounds()
                             : "measure";
+  case Kind::Unit:
+    return node_->dimension ? "units of " + units::describe(*node_->dimension, system)
+                            : "units";
   case Kind::Record: {
     std::vector<std::string> parts;
     for (const auto &field : node_->fields)
@@ -294,6 +337,9 @@ auto ValueFormat::describe(const units::UnitSystem &system) const -> std::string
     return "(" + join(parts, ", ") + ")";
   }
   case Kind::List:
+    if (node_->trailing_unit && node_->dimension)
+      return "list" + size() + " of " + node_->element->describe(system) +
+             ", followed by units of " + units::describe(*node_->dimension, system);
     return "list" + size() + " of " + node_->element->describe(system);
   case Kind::QuantityList:
     return "list" + size() + " of " +
@@ -451,6 +497,36 @@ auto Choice(std::vector<ValueFormat> alternatives) -> ValueFormat {
 auto Composition() -> ValueFormat {
   return List(Record({{"name", Word()}, {"value", Real()}}));
 }
+
+auto Composition(const units::Dimension &dimension) -> ValueFormat {
+  auto node = make(ValueFormat::Kind::List);
+  node->element = Record({{"name", Word()}, {"value", Real()}});
+  node->min_size = 1;
+  node->dimension = dimension;
+  node->trailing_unit = true;
+  return ValueFormat(std::move(node));
+}
+
+auto Quantity() -> ValueFormat {
+  auto node = make(ValueFormat::Kind::Quantity);
+  node->runtime_dimension = true;
+  return ValueFormat(std::move(node));
+}
+
+auto QuantityList() -> ValueFormat {
+  auto node = make(ValueFormat::Kind::QuantityList);
+  node->runtime_dimension = true;
+  node->min_size = 1;
+  return ValueFormat(std::move(node));
+}
+
+auto Unit() -> ValueFormat { return ValueFormat(make(ValueFormat::Kind::Unit)); }
+
+auto Unit(const units::Dimension &dimension) -> ValueFormat {
+  auto node = make(ValueFormat::Kind::Unit);
+  node->dimension = dimension;
+  return ValueFormat(std::move(node));
+}
 } // namespace formats
 
 // ---------------------------------------------------------------------------
@@ -573,6 +649,60 @@ private:
     }
   }
 
+  // Whether token `at` is valid units of some dimension (else a problem).
+  auto valid_unit(std::size_t at, const std::string &context) -> bool {
+    try {
+      (void)units::parse_unit(tokens_[at]);
+      return true;
+    } catch (const units::UnitError &error) {
+      add(context, error.what(), at, DiagnosticCode::InvalidUnit);
+      return false;
+    }
+  }
+
+  // Elements (name, number) followed by one units token for all the numbers.
+  auto list_with_unit(const ValueFormat &format, std::size_t begin,
+                      std::size_t end, const std::string &context) -> Value {
+    const std::string expected =
+        "pairs of a name and a number followed by their units (e.g. 'OH 1e-5 "
+        "HO2 2e-5 " +
+        units::si_unit(*format.dimension(), system_) + "')";
+    const std::size_t n = end - begin;
+    double number = 0.0;
+    const bool no_units = n > 0 && parse_number(tokens_[end - 1], number);
+    if (n < 3 || n % 2 == 0 || no_units) {
+      add(context,
+          expected + ", but " +
+              (no_units ? std::string("the units are missing")
+                        : count(n, "value was", "values were") + " given"),
+          keyword_token);
+      return {};
+    }
+    const std::size_t unit_token = end - 1;
+    try {
+      (void)units::to_si(1.0, tokens_[unit_token], *format.dimension(), system_);
+    } catch (const units::UnitError &error) {
+      add(context, error.what(), unit_token, DiagnosticCode::InvalidUnit);
+      return {};
+    }
+    Value value;
+    value.kind = Value::Kind::Sequence;
+    const std::size_t pairs = (n - 1) / 2;
+    check_size(format, pairs, pairs == 1 ? "element was" : "elements were",
+               context);
+    for (std::size_t k = 0; k < pairs; ++k) {
+      const std::size_t at = begin + 2 * k;
+      Value item = whole(format.element(), at, at + 2,
+                         join_context(context, "element " + std::to_string(k + 1)));
+      if (item.kind == Value::Kind::Sequence && item.items.size() == 2 &&
+          item.items[1].kind == Value::Kind::Real)
+        item.items[1].real = units::to_si(item.items[1].real, tokens_[unit_token],
+                                          *format.dimension(), system_);
+      value.items.push_back(std::move(item));
+    }
+    return value;
+  }
+
   auto fixed(const ValueFormat &format, std::size_t at,
              const std::string &context) -> Value {
     Value value;
@@ -650,6 +780,22 @@ private:
       return value;
     }
     case Kind::Quantity: {
+      if (!format.dimension()) {
+        // Dimension chosen when the value is read: check the number and the units
+        double magnitude = 0.0;
+        if (!parse_number(token, magnitude)) {
+          add(context,
+              "the magnitude of a measure must be a finite number, but " +
+                  quote(token) + " was given",
+              at);
+          return value;
+        }
+        if (!valid_unit(at + 1, context))
+          return value;
+        value.kind = Value::Kind::Real;
+        value.real = magnitude;
+        return value;
+      }
       bool ok = false;
       const double si =
           quantity_value(*format.dimension(), format, at, at + 1, context, ok);
@@ -673,6 +819,20 @@ private:
     }
     case Kind::Choice:
       return choice(format, at, at + *format.width(), context);
+    case Kind::Unit: {
+      if (format.dimension()) {
+        try {
+          (void)units::to_si(1.0, token, *format.dimension(), system_);
+        } catch (const units::UnitError &error) {
+          add(context, error.what(), at, DiagnosticCode::InvalidUnit);
+          return value;
+        }
+      } else if (!valid_unit(at, context))
+        return value;
+      value.kind = Value::Kind::Text;
+      value.text = token;
+      return value;
+    }
     default:
       return whole(format, at, tokens_.size(), context);
     }
@@ -724,6 +884,8 @@ private:
 
   auto list(const ValueFormat &format, std::size_t begin, std::size_t end,
             const std::string &context) -> Value {
+    if (format.trailing_unit())
+      return list_with_unit(format, begin, end, context);
     Value value;
     value.kind = Value::Kind::Sequence;
     const ValueFormat &element = format.element();
@@ -768,7 +930,13 @@ private:
       const std::size_t number_token = begin + (shared ? k : 2 * k);
       const std::size_t unit_token = shared ? end - 1 : begin + 2 * k + 1;
       Value item;
-      if (format.dimension()) {
+      if (format.runtime_dimension()) {
+        // Dimension chosen when the value is read: check the units only
+        if (!valid_unit(unit_token, context) && shared)
+          break;
+        item.kind = Value::Kind::Real;
+        item.real = magnitudes[k];
+      } else if (format.dimension()) {
         bool ok = false;
         const double si = quantity_value(*format.dimension(), format,
                                          number_token, unit_token, context, ok);

@@ -252,6 +252,51 @@ protected:
 
 template <class G> class View;
 
+/**
+ * \brief Units read from a dictionary (key declared with `Unit()`), e.g. the
+ * units of a profile whose variable is known only at run time.
+ */
+struct Units {
+  /** \brief The units as written, e.g. `cm`. */
+  std::string symbol;
+  /** \brief Unit system of the dictionary (amounts in kmol by default). */
+  units::UnitSystem system{};
+  /** \brief Location of the keyword, used in error messages. */
+  SourceLocation location{};
+
+  /**
+   * \brief Converts `value`, written in these units, to SI.
+   *
+   * \warning Throws `DictionaryError` (code `InvalidUnit`, located at the
+   * keyword) if the units do not have `dimension`.
+   */
+  [[nodiscard]] auto to_si(double value, const units::Dimension &dimension) const
+      -> double {
+    try {
+      return units::to_si(value, symbol, dimension, system);
+    } catch (const units::UnitError &error) {
+      throw DictionaryError({Diagnostic{Severity::Error, DiagnosticCode::InvalidUnit,
+                                        location, error.what(), {}, {}}},
+                            "Units " + symbol);
+    }
+  }
+};
+} // namespace OpenSMOKEpp::typed
+
+namespace OpenSMOKEpp::detail {
+/** \brief Conversion of a `Unit()` value (its system and location are set by
+ * the view). */
+template <> struct ValueConverter<typed::Units, void> {
+  static auto from(const Value &v) -> typed::Units {
+    if (v.kind != Value::Kind::Text)
+      shape_error("units", v);
+    return typed::Units{v.text, {}, {}};
+  }
+};
+} // namespace OpenSMOKEpp::detail
+
+namespace OpenSMOKEpp::typed {
+
 // ---------------------------------------------------------------------------
 // Value specs: the C++ type of a value and its format
 // ---------------------------------------------------------------------------
@@ -417,6 +462,82 @@ struct QuantityListSpec : detail::Bounded<QuantityListSpec>,
     if (sized())
       k.SetSize(size_min_, size_max_);
     return k;
+  }
+};
+
+/**
+ * \brief A number followed by units whose dimension is given when the key is
+ * read, with `View::get(key, dimension)`; the value is in SI units
+ * (`double`). The grammar checks that the units are valid units.
+ */
+struct RuntimeQuantitySpec : detail::Bounded<RuntimeQuantitySpec> {
+  using type = double;
+  static constexpr bool comparable = false;
+  [[nodiscard]] constexpr auto may_equal(std::string_view) const -> bool {
+    return false;
+  }
+  [[nodiscard]] auto format() const -> ValueFormat {
+    return bound(formats::Quantity());
+  }
+  [[nodiscard]] auto keyword(const std::string &name, const std::string &comment,
+                             bool compulsory) const -> DictionaryKeyWord {
+    return detail::structured(name, format(), comment, compulsory);
+  }
+};
+
+/** \brief Measures whose dimension is given when the key is read, with
+ * `View::get(key, dimension)` (`std::vector<double>`, SI units). The units are
+ * compulsory: `1 m 20 cm` or `1 2 3 m`. */
+struct RuntimeQuantityListSpec : detail::Bounded<RuntimeQuantityListSpec>,
+                                 detail::Sized<RuntimeQuantityListSpec> {
+  using type = std::vector<double>;
+  static constexpr bool comparable = false;
+  [[nodiscard]] constexpr auto may_equal(std::string_view) const -> bool {
+    return false;
+  }
+  [[nodiscard]] auto format() const -> ValueFormat {
+    ValueFormat f = bound(formats::QuantityList());
+    return sized() ? f.Size(size_min_, size_max_) : f;
+  }
+  [[nodiscard]] auto keyword(const std::string &name, const std::string &comment,
+                             bool compulsory) const -> DictionaryKeyWord {
+    return detail::structured(name, format(), comment, compulsory);
+  }
+};
+
+/** \brief One units token, e.g. `cm` (`Units`, which converts values with
+ * `Units::to_si(value, dimension)`). The grammar checks that the units are
+ * valid units. */
+struct UnitSpec {
+  using type = Units;
+  static constexpr bool comparable = false;
+  [[nodiscard]] constexpr auto may_equal(std::string_view) const -> bool {
+    return false;
+  }
+  [[nodiscard]] auto format() const -> ValueFormat { return formats::Unit(); }
+  [[nodiscard]] auto keyword(const std::string &name, const std::string &comment,
+                             bool compulsory) const -> DictionaryKeyWord {
+    return detail::structured(name, format(), comment, compulsory);
+  }
+};
+
+/** \brief Pairs of a name and a number followed by their units,
+ * `OH 1e-5 HO2 2e-5 mol/cm3`; the numbers are in SI units
+ * (`std::vector<std::pair<std::string, double>>`). The units are compulsory. */
+struct QuantityCompositionSpec : detail::Sized<QuantityCompositionSpec> {
+  using type = std::vector<std::pair<std::string, double>>;
+  static constexpr bool comparable = false;
+  units::Dimension dimension{};
+  [[nodiscard]] constexpr auto may_equal(std::string_view) const -> bool {
+    return false;
+  }
+  [[nodiscard]] auto format() const -> ValueFormat {
+    ValueFormat f = formats::Composition(dimension);
+    return sized() ? f.Size(size_min_, size_max_) : f;
+  }
+  [[nodiscard]] auto keyword(const std::string &name, const std::string &comment,
+                             bool compulsory) const -> DictionaryKeyWord {
+    return detail::structured(name, format(), comment, compulsory);
   }
 };
 
@@ -695,8 +816,26 @@ template <class G> struct ReferenceListSpec : detail::Sized<ReferenceListSpec<G>
   spec.dimension = dimension;
   return spec;
 }
+/** \brief A measure whose dimension is given when the key is read with
+ * `View::get(key, dimension)` (`double`, SI units). */
+[[nodiscard]] constexpr auto Quantity() -> RuntimeQuantitySpec { return {}; }
+/** \brief Measures whose dimension is given when the key is read with
+ * `View::get(key, dimension)` (`std::vector<double>`, SI units). */
+[[nodiscard]] constexpr auto QuantityList() -> RuntimeQuantityListSpec {
+  return {};
+}
+/** \brief One units token (`Units`). */
+[[nodiscard]] constexpr auto Unit() -> UnitSpec { return {}; }
 /** \brief Name–number pairs (`std::vector<std::pair<std::string, double>>`). */
 [[nodiscard]] constexpr auto Composition() -> CompositionSpec { return {}; }
+/** \brief Name–number pairs followed by the units of the numbers, which are
+ * converted to SI (`std::vector<std::pair<std::string, double>>`). */
+[[nodiscard]] constexpr auto Composition(const units::Dimension &dimension)
+    -> QuantityCompositionSpec {
+  QuantityCompositionSpec spec;
+  spec.dimension = dimension;
+  return spec;
+}
 /** \brief One of `names` (type `E`: an enum, or `std::string`). */
 template <class E = std::string, class... Names>
 [[nodiscard]] constexpr auto Enumeration(const Names &...names)
@@ -816,6 +955,19 @@ template <class T> struct is_reference : std::false_type {};
 template <class G> struct is_reference<ReferenceSpec<G>> : std::true_type {};
 template <class T> struct is_reference_list : std::false_type {};
 template <class G> struct is_reference_list<ReferenceListSpec<G>> : std::true_type {};
+
+/** \brief Whether a spec contains measures whose dimension is given when the
+ * key is read (`Quantity()`, `QuantityList()`). */
+template <class S> struct needs_dimension : std::false_type {};
+template <> struct needs_dimension<RuntimeQuantitySpec> : std::true_type {};
+template <> struct needs_dimension<RuntimeQuantityListSpec> : std::true_type {};
+template <class S> struct needs_dimension<ListSpec<S>> : needs_dimension<S> {};
+template <class... S>
+struct needs_dimension<RecordSpec<S...>>
+    : std::bool_constant<(needs_dimension<S>::value || ...)> {};
+template <class... S>
+struct needs_dimension<ChoiceSpec<S...>>
+    : std::bool_constant<(needs_dimension<S>::value || ...)> {};
 } // namespace detail
 
 /** \brief A typed key. */
@@ -1421,6 +1573,38 @@ public:
     return read_value(key);
   }
 
+  /**
+   * \brief Reads a key whose measures take their dimension when read
+   * (declared with `Quantity()` or `QuantityList()`, also inside a list,
+   * record or choice). The units are checked against `dimension` and the
+   * values are converted to SI.
+   *
+   * \warning Throws `DictionaryError` if the key is absent and has no
+   * default, or (located at the units) if the units do not have `dimension`.
+   */
+  template <fixed_string N, class S>
+  [[nodiscard]] auto get(const KeySpec<N, S> &key,
+                         const units::Dimension &dimension) const ->
+      typename S::type {
+    assert_declared<N, S>();
+    static_assert(detail::needs_dimension<S>::value,
+                  "View::get(key, dimension): the dimension of this key is "
+                  "fixed by the grammar; use get(key)");
+    return dictionary_->template Read<typename S::type>(key.name(), dimension);
+  }
+
+  /** \brief As `get(key, dimension)`, or `std::nullopt` if the key is absent
+   * and has no default. */
+  template <fixed_string N, class S>
+  [[nodiscard]] auto get_if(const KeySpec<N, S> &key,
+                            const units::Dimension &dimension) const
+      -> std::optional<typename S::type> {
+    if (!dictionary_->CheckOption(key.name()) &&
+        !std::get<KeySpec<N, S>>(G::keys).default_)
+      return std::nullopt;
+    return get(key, dimension);
+  }
+
   /** \brief The value of a key, or `std::nullopt` if it is absent and has no
    * default. */
   template <fixed_string N, class S>
@@ -1504,6 +1688,9 @@ private:
 
   template <fixed_string N, class S>
   auto read_value(const KeySpec<N, S> &key) const -> typename S::type {
+    static_assert(!detail::needs_dimension<S>::value,
+                  "View::get: the measures of this key take their dimension "
+                  "when it is read; use get(key, dimension)");
     if constexpr (detail::is_reference<S>::value) {
       const auto target = dictionary_->template Read<std::string>(key.name());
       return manager().template view<typename S::grammar>(
@@ -1520,6 +1707,18 @@ private:
     } else if constexpr (std::is_same_v<typename S::type, std::filesystem::path>) {
       return std::filesystem::path(
           dictionary_->template Read<std::string>(key.name()));
+    } else if constexpr (std::is_same_v<typename S::type, Units>) {
+      Units units = dictionary_->template Read<Units>(key.name());
+      units.system = dictionary_->unit_system();
+      units.location = dictionary_->location_of(key.name());
+      return units;
+    } else if constexpr (std::is_same_v<typename S::type, std::vector<Units>>) {
+      auto list = dictionary_->template Read<std::vector<Units>>(key.name());
+      for (auto &units : list) {
+        units.system = dictionary_->unit_system();
+        units.location = dictionary_->location_of(key.name());
+      }
+      return list;
     } else {
       return dictionary_->template Read<typename S::type>(key.name());
     }

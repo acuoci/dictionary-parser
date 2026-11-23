@@ -395,6 +395,22 @@ public:
   [[nodiscard]] Value ReadValue(std::string_view name_of_keyword);
 
   /**
+   * \brief Reads a keyword whose quantities take their dimension when read
+   * (declared with `formats::Quantity()` or `formats::QuantityList()`).
+   *
+   * The value is parsed again with that dimension: the units are checked
+   * and the values converted to SI.
+   *
+   * \param[in] name_of_keyword Keyword name including leading `@`.
+   * \param[in] dimension Dimension of the quantities.
+   * \warning Throws `DictionaryError` as `ReadValue`, or with code
+   * `InvalidUnit` (pointing at the units) if the units do not have
+   * `dimension`.
+   */
+  [[nodiscard]] Value ReadValue(std::string_view name_of_keyword,
+                                const units::Dimension &dimension);
+
+  /**
    * \brief Reads any keyword as a C++ value.
    *
    * Works for every keyword type, legacy types included:
@@ -419,6 +435,21 @@ public:
    */
   template <typename T> [[nodiscard]] T Read(std::string_view name_of_keyword) {
     const Value value = ReadValue(name_of_keyword);
+    try {
+      return detail::ValueConverter<T>::from(value);
+    } catch (const detail::ValueShapeError &error) {
+      ThrowConversionError(name_of_keyword, error.what());
+    }
+  }
+
+  /**
+   * \brief Reads a keyword whose quantities take their dimension when read,
+   * as a C++ value (see `ReadValue(name, dimension)`).
+   */
+  template <typename T>
+  [[nodiscard]] T Read(std::string_view name_of_keyword,
+                       const units::Dimension &dimension) {
+    const Value value = ReadValue(name_of_keyword, dimension);
     try {
       return detail::ValueConverter<T>::from(value);
     } catch (const detail::ValueShapeError &error) {
@@ -530,6 +561,10 @@ private:
   /** \brief Throws the error described by a failed lookup. */
   [[noreturn]] void FailLookup(std::string_view name_of_keyword,
                                const ParseError &error) const;
+
+  /** \brief Parses the value of a keyword with `format`. */
+  [[nodiscard]] Value ParseWith(std::string_view name_of_keyword,
+                                const ValueFormat &format);
 
   /**
    * \brief Locates a keyword (or its grammar default) without throwing.

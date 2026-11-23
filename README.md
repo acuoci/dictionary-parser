@@ -355,6 +355,9 @@ AddKeyWord(DictionaryKeyWord("@OdeSolver",
 | `Table({{"name", dim}, ...})` | one unit per column (`-` if dimensionless), then rows; SI values |
 | `Choice({...})` | the first alternative that matches the whole value |
 | `Composition()` | name/number pairs (`CH4 0.5 O2 0.5`) |
+| `Composition(dim)` | name/number pairs followed by their units (`OH 1e-5 HO2 2e-5 mol/cm3`), converted to SI |
+| `Quantity()`, `QuantityList()` | measures whose dimension is given when the value is read (`ValueFormat::WithDimension`) |
+| `Unit()`, `Unit(dim)` | one units token (`cm`), checked to be valid units (of `dim`) |
 
 Formats are validated when the grammar is built (for example a list of
 variable-length elements, or a bound on a word, is rejected), values are
@@ -466,6 +469,9 @@ the first problem found, so it can also be tested with `static_assert`.
 | `Word()`, `Text()`, `Path()` | `std::string`, `std::string`, `std::filesystem::path` |
 | `Quantity(dim)`, `QuantityList(dim)` | `double`, `std::vector<double>` (SI) |
 | `Composition()` | `std::vector<std::pair<std::string, double>>` (`Sum`, `Size`, bounds) |
+| `Composition(dim)` | `std::vector<std::pair<std::string, double>>` (SI; the units are compulsory) |
+| `Quantity()`, `QuantityList()` | `double`, `std::vector<double>` (SI), read with `get(key, dimension)` |
+| `Unit()` | `typed::Units` (`to_si(value, dimension)`) |
 | `Enumeration<E>(names...)` | `E` (by position), or `std::string`; `Alias`, `Disable` |
 | `List(spec)` | `std::vector<spec type>` (`Size`) |
 | `Record(Field("name", spec)...)` | `std::tuple<field types...>` |
@@ -542,8 +548,20 @@ const auto times       = dictionary.Read<std::vector<double>>("@SnapshotTimes");
   shared unit (`1000 1100 1200 K`).
 - Grammar files declare a dimension with an optional eighth line after the
   seven keyword lines: `dimension: m/s` (or `dimension: K difference`).
+- When the dimension is known only at run time (it depends on another
+  keyword, e.g. the type of a parametric analysis or the variable of a
+  profile), declare the key with `Quantity()` or `QuantityList()` (also
+  inside a list, record or choice) and read it with
+  `view.get(key, dimension)`. The grammar checks that a number is followed by
+  valid units; the read checks them against `dimension` (errors point at the
+  units) and converts to SI. `get(key)` on such a key does not compile.
+- Units written in their own keyword (`@XUnits cm;`) are declared with
+  `Unit()`: `view.get(key)` returns a `typed::Units` whose
+  `to_si(value, dimension)` converts values (an error names the keyword).
+- `Composition(dim)` reads pairs followed by their units
+  (`OH 1e-5 HO2 2e-5 mol/cm3`): the units are compulsory.
 - `units::to_si(value, "cm/s", dim::Velocity)` and `units::from_si` are
-  available for units found elsewhere (e.g. a separate `@XUnits` keyword).
+  available for units found outside dictionaries (e.g. in a CSV file).
 - Mismatches are explicit: `line 12, keyword @FuelVelocity: units 'K'
   (temperature [K]) are not compatible with the expected velocity [m/s]`;
   misspelled symbols get a suggestion (`'Kg' (did you mean 'kg'?)`).

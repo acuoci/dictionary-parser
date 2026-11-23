@@ -490,3 +490,71 @@ TEST_CASE("frontend", "DictionaryName: a dictionary with an untyped grammar") {
       catch_error([&] { (void)wrong.view<legacy_reference::Main>("main"); });
   CHECK(std::string(error.what()).find("dictionary name") != std::string::npos);
 }
+
+// ---------------------------------------------------------------------------
+// Measures whose dimension is given when they are read
+// ---------------------------------------------------------------------------
+namespace runtime_units {
+inline constexpr auto Minimum = Key<"@MinimumValue">(Quantity(), "Minimum value");
+inline constexpr auto Values = Key<"@ListOfValues">(QuantityList(), "List of values");
+inline constexpr auto Either =
+    Key<"@Either">(Choice(QuantityList(), List(Word())), "Measures or words");
+inline constexpr auto XUnits = Key<"@XUnits">(Unit(), "Units of x");
+inline constexpr auto YsUnits = Key<"@YsUnits">(List(Unit()), "Units of the y variables");
+inline constexpr auto Targets =
+    Key<"@Targets">(Composition(units::dim::Concentration), "Target concentrations");
+struct Options : Grammar<Options> {
+  static constexpr auto keys = Keys(Minimum, Values, Either, XUnits, YsUnits, Targets);
+};
+} // namespace runtime_units
+
+TEST_CASE("frontend", "measures whose dimension is given when they are read") {
+  using namespace runtime_units;
+  namespace dim = units::dim;
+  auto manager = parse("Dictionary d { @MinimumValue 25 C; @ListOfValues 1 2 3 atm;"
+                       " @Either 1 2 min; @XUnits cm; @YsUnits K atm;"
+                       " @Targets OH 1e-4 CH 2e-7 mol/cm3; }");
+  const auto view = manager.view<Options>("d");
+  CHECK(near(view.get(Minimum, dim::Temperature), 298.15));
+  CHECK(view.get(Values, dim::Pressure) ==
+        (std::vector<double>{101325., 202650., 303975.}));
+  const auto either = view.get(Either, dim::Time);
+  CHECK(std::get<0>(either) == (std::vector<double>{60., 120.}));
+  CHECK(view.get(XUnits).to_si(2., dim::Length) == 2. / 100.);
+  const auto ys = view.get(YsUnits);
+  CHECK(ys.size() == 2 && near(ys[0].to_si(0., dim::Temperature), 0.) &&
+        ys[1].to_si(1., dim::Pressure) == 101325.);
+  const auto targets = view.get(Targets);
+  CHECK(targets.size() == 2 && targets[0].first == "OH" && near(targets[0].second, 1e-1) &&
+        targets[1].first == "CH" && near(targets[1].second, 2e-4)); // kmol/m3
+
+  // The units must match the dimension given when reading (located errors)
+  const DictionaryError wrong =
+      catch_error([&] { (void)view.get(Values, dim::Temperature); });
+  CHECK(wrong.diagnostics().front().code == DiagnosticCode::InvalidUnit);
+  CHECK(wrong.diagnostics().front().location.column > 0);
+  CHECK_THROWS_WITH((void)view.get(XUnits).to_si(1., dim::Time),
+                    "are not compatible with the expected time");
+
+  // Without units, a list of words is not a list of measures
+  auto words = parse("Dictionary d { @Either CH4 1 O2 2 : CH4 1 O2 3; }");
+  CHECK(std::get<1>(words.view<Options>("d").get(Either, dim::Time)).size() == 9);
+}
+
+TEST_CASE("frontend", "units are compulsory and checked by the grammar") {
+  using namespace runtime_units;
+  const auto rejected = [](const char *text) {
+    auto manager = parse(text);
+    return catch_error([&] { (void)manager.view<Options>("d"); });
+  };
+  CHECK(rejected("Dictionary d { @MinimumValue 25; }").error_count() == 1);
+  CHECK(rejected("Dictionary d { @MinimumValue 25 parsec; }").diagnostics().front().code ==
+        DiagnosticCode::InvalidUnit);
+  CHECK(rejected("Dictionary d { @ListOfValues 1 2 3; }").error_count() == 1);
+  CHECK(rejected("Dictionary d { @XUnits furlongs; }").diagnostics().front().code ==
+        DiagnosticCode::InvalidUnit);
+  CHECK(std::string(rejected("Dictionary d { @Targets OH 1e-4 CH 2e-7; }").what())
+            .find("the units are missing") != std::string::npos);
+  CHECK(rejected("Dictionary d { @Targets OH 1e-4 K; }").diagnostics().front().code ==
+        DiagnosticCode::InvalidUnit);
+}

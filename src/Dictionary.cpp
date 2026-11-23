@@ -418,14 +418,34 @@ auto Dictionary::LookupAny(std::string_view name_of_keyword,
 }
 
 Value Dictionary::ReadValue(std::string_view name_of_keyword) {
+  const DictionaryKeyWord *declared =
+      has_grammar_ ? grammar_.FindKeyWord(name_of_keyword) : nullptr;
+  return ParseWith(name_of_keyword, declared != nullptr
+                                        ? detail::format_of(*declared)
+                                        : formats::Text());
+}
+
+Value Dictionary::ReadValue(std::string_view name_of_keyword,
+                            const units::Dimension &dimension) {
+  const DictionaryKeyWord *declared =
+      has_grammar_ ? grammar_.FindKeyWord(name_of_keyword) : nullptr;
+  return ParseWith(name_of_keyword,
+                   declared != nullptr
+                       ? detail::format_of(*declared).WithDimension(dimension)
+                       : formats::Text());
+}
+
+// (an absent grammar or keyword is reported by LookupAny before parsing)
+Value Dictionary::ParseWith(std::string_view name_of_keyword,
+                            const ValueFormat &format) {
   std::size_t index = 0;
   if (const auto error = LookupAny(name_of_keyword, index))
     FailLookup(name_of_keyword, *error);
   const DictionaryKeyWord &declared = *grammar_.FindKeyWord(name_of_keyword);
   if (declared.type() == NONE)
     return Value{};
-  auto outcome = detail::parse_value(detail::format_of(declared),
-                                     entries_[index].values, unit_system_);
+  auto outcome =
+      detail::parse_value(format, entries_[index].values, unit_system_);
   if (outcome.problems.empty())
     return std::move(outcome.value);
   std::vector<Diagnostic> diagnostics;

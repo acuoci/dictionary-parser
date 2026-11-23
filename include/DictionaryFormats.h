@@ -126,7 +126,8 @@ public:
     List,         ///< repetition of a fixed-width element
     QuantityList, ///< measures: pairs or numbers followed by one unit
     Table,        ///< units header (if any column has a dimension) + rows
-    Choice        ///< the first alternative that matches
+    Choice,       ///< the first alternative that matches
+    Unit          ///< one units token (of a dimension, if given)
   };
 
   /** \brief One named field of a record (see `ValueFormatField`). */
@@ -182,6 +183,22 @@ public:
   [[nodiscard]] std::size_t min_size() const noexcept;
   /** \brief Maximum number of elements (lists, tables, lists of measures). */
   [[nodiscard]] std::size_t max_size() const noexcept;
+  /**
+   * \brief Whether a quantity or list of measures takes its dimension when
+   * the value is read (see `WithDimension`).
+   */
+  [[nodiscard]] bool runtime_dimension() const noexcept;
+  /** \brief Whether a list ends with one units token for its numbers
+   * (`Composition(dimension)`). */
+  [[nodiscard]] bool trailing_unit() const noexcept;
+  /** \brief Whether this format, or a nested one, takes its dimension when
+   * the value is read. */
+  [[nodiscard]] bool needs_dimension() const;
+  /**
+   * \brief Copy in which the quantities and lists of measures without a
+   * dimension (`Quantity()`, `QuantityList()`) take `dimension`.
+   */
+  [[nodiscard]] ValueFormat WithDimension(const units::Dimension &dimension) const;
 
   /** \brief Copy with a lower bound (numbers and quantities, SI units). */
   [[nodiscard]] ValueFormat Minimum(double value, bool inclusive = true) const;
@@ -250,6 +267,12 @@ namespace formats {
 [[nodiscard]] auto Enumeration(std::vector<std::string> values) -> ValueFormat;
 /** \brief A number followed by units of the given dimension (SI value). */
 [[nodiscard]] auto Quantity(const units::Dimension &dimension) -> ValueFormat;
+/**
+ * \brief A number followed by units whose dimension is chosen when the value
+ * is read (`ValueFormat::WithDimension`). Before that, the units must only be
+ * valid units of some dimension.
+ */
+[[nodiscard]] auto Quantity() -> ValueFormat;
 /** \brief A fixed sequence of named fields; only the last field may have a
  * variable width. */
 [[nodiscard]] auto Record(std::vector<ValueFormat::Field> fields) -> ValueFormat;
@@ -260,6 +283,13 @@ namespace formats {
 /** \brief Measures of one dimension: `1 m 20 cm` or `1 2 3 m` (SI values). */
 [[nodiscard]] auto QuantityList(const units::Dimension &dimension)
     -> ValueFormat;
+/** \brief Measures whose dimension is chosen when the value is read (see
+ * `Quantity()`). */
+[[nodiscard]] auto QuantityList() -> ValueFormat;
+/** \brief One units token, e.g. `cm` (of the given dimension, if any). */
+[[nodiscard]] auto Unit() -> ValueFormat;
+/** \brief One units token of the given dimension. */
+[[nodiscard]] auto Unit(const units::Dimension &dimension) -> ValueFormat;
 /**
  * \brief Rows of numbers. If any column has a dimension, the value starts
  * with one unit per column (`-` for dimensionless columns), e.g.
@@ -271,6 +301,11 @@ namespace formats {
 [[nodiscard]] auto Choice(std::vector<ValueFormat> alternatives) -> ValueFormat;
 /** \brief Pairs of a name and a number, e.g. `CH4 0.5 O2 0.5`. */
 [[nodiscard]] auto Composition() -> ValueFormat;
+/**
+ * \brief Pairs of a name and a number followed by the units of the numbers,
+ * e.g. `OH 1e-5 HO2 2e-5 mol/cm3`; the numbers are converted to SI.
+ */
+[[nodiscard]] auto Composition(const units::Dimension &dimension) -> ValueFormat;
 } // namespace formats
 
 // ---------------------------------------------------------------------------
