@@ -62,6 +62,17 @@ template <class G> class View;
  */
 class DictionaryManager {
 public:
+  DictionaryManager() = default;
+  DictionaryManager(DictionaryManager &&) noexcept = default;
+  DictionaryManager &operator=(DictionaryManager &&) noexcept = default;
+
+  /**
+   * \brief With a warning stream (see `SetWarningStream`), reports the
+   * dictionaries that the program never used: never validated, viewed,
+   * looked up (`operator()`, `Require`) nor named by a validated dictionary.
+   */
+  ~DictionaryManager();
+
   /**
    * \brief Reads all dictionary blocks from a file.
    *
@@ -110,6 +121,16 @@ public:
   [[nodiscard]] bool contains(std::string_view name) const;
 
   /**
+   * \brief Returns a dictionary named by another one.
+   *
+   * \param[in] name Dictionary name.
+   * \param[in] from Location of the reference (used in the error).
+   * \warning Throws `DictionaryError` (code `UnknownDictionary`, located at
+   * `from`, with a suggestion) if the dictionary was not loaded.
+   */
+  Dictionary &Require(std::string_view name, const SourceLocation &from);
+
+  /**
    * \brief Selects the target unit system of all dictionaries.
    *
    * Applies to the dictionaries already loaded and to those loaded later.
@@ -126,6 +147,19 @@ public:
    * \param[in] value `true` to promote warnings to errors.
    */
   void SetWarningsAsErrors(bool value);
+
+  /**
+   * \brief Prints warnings on `stream`: those of every dictionary as soon as
+   * they are found, each one once (see `Dictionary::SetWarningStream`),
+   * including dictionaries loaded later; and, when the manager is destroyed,
+   * the dictionaries that were never used (a dictionary may be read by a
+   * name the grammars do not know, e.g. one built by the program, so
+   * `validate` does not print the unreferenced dictionaries it returns).
+   *
+   * \param[in] stream Output stream, or `nullptr` (the default) to print
+   * nothing.
+   */
+  void SetWarningStream(std::ostream *stream);
 
   /**
    * \brief Reports, for every dictionary with a grammar, the keywords written
@@ -215,6 +249,26 @@ private:
 
   /** \brief Warning policy applied to every dictionary. */
   bool warnings_as_errors_ = false;
+  /** \brief A stream pointer that is cleared when moved from (so that only
+   * one manager reports). */
+  struct StreamPointer {
+    std::ostream *stream = nullptr;
+    StreamPointer() = default;
+    StreamPointer(const StreamPointer &) = delete;
+    StreamPointer &operator=(const StreamPointer &) = delete;
+    StreamPointer(StreamPointer &&other) noexcept : stream(other.stream) {
+      other.stream = nullptr;
+    }
+    StreamPointer &operator=(StreamPointer &&other) noexcept {
+      stream = other.stream;
+      other.stream = nullptr;
+      return *this;
+    }
+  };
+  StreamPointer warning_stream_;
+
+  /** \brief Names of the dictionaries used so far. */
+  std::set<std::string, std::less<>> used_dictionaries_;
 
   /** \brief Where each dictionary was defined. */
   std::map<std::string, SourceLocation, std::less<>> origins_;

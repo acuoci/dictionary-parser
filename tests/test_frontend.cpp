@@ -41,6 +41,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -557,4 +558,49 @@ TEST_CASE("frontend", "units are compulsory and checked by the grammar") {
             .find("the units are missing") != std::string::npos);
   CHECK(rejected("Dictionary d { @Targets OH 1e-4 K; }").diagnostics().front().code ==
         DiagnosticCode::InvalidUnit);
+}
+
+// ---------------------------------------------------------------------------
+// Warnings printed on a stream, and dictionaries named by DictionaryName keys
+// ---------------------------------------------------------------------------
+namespace reporting {
+inline constexpr auto Old = Key<"@Old">(Integer(), "Old option").Deprecated("@Old has no effect");
+inline constexpr auto Options = Key<"@Options">(DictionaryName(), "Options (untyped)");
+struct Main : Grammar<Main> {
+  static constexpr auto keys = Keys(Old, Options);
+};
+} // namespace reporting
+
+TEST_CASE("frontend", "warnings are printed once on the warning stream") {
+  std::ostringstream out;
+  std::size_t returned = 0;
+  {
+    auto manager = parse("Dictionary main { @Old 1; @Options opts; }\n"
+                         "Dictionary opts { @Profile prof; }\n"
+                         "Dictionary prof { @X 1; }\n"
+                         "Dictionary later { @Y 1; }\n"
+                         "Dictionary lost { @Z 1; }\n");
+    manager.SetWarningStream(&out);
+    returned = manager.validate<reporting::Main>("main").size();
+    (void)manager.view<reporting::Main>("main");
+    (void)attach<reporting::Main>(manager("main")); // attached again: no repetition
+    (void)manager("later"); // used by the program by a name no grammar knows
+    CHECK(out.str().find("'lost'") == std::string::npos); // reported at the end
+  }
+  const std::string text = out.str();
+  CHECK(text.find("@Old has no effect") != std::string::npos);
+  CHECK(text.find("@Old has no effect") == text.rfind("@Old has no effect"));
+  CHECK(text.find("'lost' was not used") != std::string::npos);
+  for (const char *used : {"'opts'", "'prof'", "'later'", "'main'"})
+    CHECK(text.find(used) == std::string::npos);
+  CHECK(returned == 3); // @Old, and later and lost not referenced by main
+}
+
+TEST_CASE("frontend", "validate checks the dictionaries named by DictionaryName keys") {
+  auto manager = parse("Dictionary main { @Options optons; }\nDictionary options { @X 1; }\n");
+  const DictionaryError error =
+      catch_error([&] { (void)manager.validate<reporting::Main>("main"); });
+  CHECK(error.diagnostics().front().code == DiagnosticCode::UnknownDictionary);
+  CHECK(error.diagnostics().front().location.line == 1); // at the reference
+  CHECK(error.diagnostics().front().hint.find("options") != std::string::npos);
 }

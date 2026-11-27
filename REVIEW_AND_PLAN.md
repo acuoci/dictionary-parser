@@ -12,6 +12,15 @@ Scope of the study:
 
 ## 0. Progress log
 
+### Reporting errors and warnings (branch `feature/phase6`, 2026-11-27)
+
+OpenSMOKE++2 removed its local dictionary layer, including the terminate handler that reported uncaught input errors; and the warnings returned by `validate` (deprecated keywords, unreferenced dictionaries) were never shown. Both are now library features:
+- `InstallErrorHandler(ErrorHandlerOptions)`: an uncaught `DictionaryError` is reported (title and diagnostics on a chosen stream, optional "Press enter to exit...") and the program exits with a chosen code, instead of aborting with a platform-dependent message.
+- `DictionaryManager::SetWarningStream` / `Dictionary::SetWarningStream`: warnings are printed as soon as they are found, each one once (a dictionary attached again does not repeat them). The dictionaries the program never used are reported when the manager is destroyed, not by `validate`: a program may read dictionaries by names no grammar knows (OpenSMOKE++ reads `Surface-<phase>` with phase names from the kinetic mechanism). The manager is now move-only.
+- `validate` also follows `DictionaryName()` keys: the named dictionary must exist (`unknown-dictionary`, located at the key, with a suggestion, before any work is done) and counts as referenced, with the dictionaries named among its values (so they are not reported as unreferenced). `DictionaryManager::Require(name, from)` is the public form of that check.
+
+Verification: 32/32 CTest targets (Clang and GCC 16), with new `frontend` cases and `Test_Error_Handler` (a program that lets a `DictionaryError` escape; checks the report and the exit code).
+
 ### Measures whose dimension is given at run time (branch `feature/phase6`, 2026-11-23)
 
 OpenSMOKE++2 had its own helpers for values whose dimension depends on another keyword (parametric analyses, profiles) and for lists whose units were optional. They are replaced by library features, and units are always compulsory:

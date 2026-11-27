@@ -238,7 +238,16 @@ flame.dic:9:16: error: keyword @Temperature: the value 5 C (= 278.15 K) must be 
 ### Warnings and Unused Keywords
 
 - Warnings (deprecated keywords) do not stop the program: they are available
-  in `dictionary.warnings()` after `SetGrammar`.
+  in `dictionary.warnings()` after `SetGrammar`, and returned by
+  `manager.validate`. `manager.SetWarningStream(&std::cout)` (or
+  `Dictionary::SetWarningStream`) prints them as soon as they are found, each
+  one once, in the format of the errors; when the manager is destroyed, it
+  also reports the dictionaries the program never used (never validated,
+  viewed, looked up or named by a validated dictionary).
+- `OpenSMOKEpp::InstallErrorHandler(options)` reports a `DictionaryError` that
+  no code catches (title, then every diagnostic, on `options.stream`), waits
+  for Enter if `options.wait_for_enter`, and exits with `options.exit_code`,
+  instead of the platform's abort message (or none).
 - `dictionary.CheckUnusedKeywords()` (or `manager.CheckUnusedKeywords()` for
   all dictionaries), called after reading, returns a warning for each keyword
   written in the file but never read by `Read<T>`/`ReadValue`: typically the calling
@@ -503,8 +512,11 @@ a view with a different typed grammar is an error (`grammar-mismatch`).
 validates each dictionary with its grammar and collects all the errors in one
 `DictionaryError`: invalid dictionaries, references to undefined dictionaries
 (`unknown-dictionary`, located at the reference, with a suggestion) and cycles
-(`reference-cycle`). It returns the warnings, including dictionaries not
-reached from the root (`unreferenced-dictionary`).
+(`reference-cycle`). A `DictionaryName()` key must name an existing
+dictionary too (same error); that dictionary is not validated (its grammar is
+not typed), and the dictionaries named among its values count as reached.
+`validate` returns the warnings, including dictionaries not reached from the
+root (`unreferenced-dictionary`).
 
 `typed::attach<G>(dictionary)` creates a view without a manager (references
 cannot be followed), and `typed::runtime_grammar<G>()` returns the equivalent

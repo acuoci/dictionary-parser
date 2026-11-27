@@ -357,6 +357,16 @@ public:
   void SetWarningsAsErrors(bool value) noexcept { warnings_as_errors_ = value; }
 
   /**
+   * \brief Prints the warnings found when a grammar is attached (for example
+   * deprecated keywords) on `stream`, each one once, in the format of the
+   * errors (`format_diagnostic`).
+   *
+   * \param[in] stream Output stream, or `nullptr` (the default) to keep the
+   * warnings in `warnings()` only.
+   */
+  void SetWarningStream(std::ostream *stream) noexcept { warning_stream_ = stream; }
+
+  /**
    * \brief Returns the keywords written in the file that have not been read
    * by any `Read<T>`/`ReadValue` call since the grammar was attached, in
    * file order.
@@ -510,6 +520,15 @@ private:
 
   /** \brief Whether warnings are promoted to errors. */
   bool warnings_as_errors_ = false;
+
+  /** \brief Stream on which warnings are printed (none if null). */
+  std::ostream *warning_stream_ = nullptr;
+
+  /** \brief Warnings already printed (each one is printed once). */
+  std::set<std::string> reported_warnings_;
+
+  /** \brief Prints the warnings not printed yet on `warning_stream_`. */
+  void ReportWarnings();
 
 private:
   /**

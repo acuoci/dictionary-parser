@@ -36,6 +36,10 @@
 #include "DictionaryDiagnostics.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <iostream>
 #include <string>
 #include <utility>
 
@@ -193,4 +197,41 @@ bool DictionaryError::has(const DiagnosticCode code) const noexcept {
   return std::any_of(diagnostics_.begin(), diagnostics_.end(),
                      [code](const Diagnostic &d) { return d.code == code; });
 }
+namespace {
+ErrorHandlerOptions error_handler_options;
+std::terminate_handler previous_terminate_handler = nullptr;
+bool error_handler_installed = false;
+
+[[noreturn]] void dictionary_terminate_handler() {
+  if (const std::exception_ptr error = std::current_exception()) {
+    try {
+      std::rethrow_exception(error);
+    } catch (const DictionaryError &dictionary_error) {
+      std::ostream &out = error_handler_options.stream != nullptr
+                              ? *error_handler_options.stream
+                              : std::cerr;
+      out << '\n' << error_handler_options.title << '\n'
+          << dictionary_error.what() << std::endl;
+      if (error_handler_options.wait_for_enter) {
+        out << "Press enter to exit..." << std::endl;
+        (void)std::getchar();
+      }
+      std::exit(error_handler_options.exit_code);
+    } catch (...) {
+    }
+  }
+  if (previous_terminate_handler != nullptr)
+    previous_terminate_handler();
+  std::abort();
+}
+} // namespace
+
+void InstallErrorHandler(ErrorHandlerOptions options) {
+  error_handler_options = std::move(options);
+  if (!error_handler_installed) {
+    previous_terminate_handler = std::set_terminate(dictionary_terminate_handler);
+    error_handler_installed = true;
+  }
+}
+
 } // namespace OpenSMOKEpp

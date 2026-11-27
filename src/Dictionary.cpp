@@ -344,6 +344,7 @@ void Dictionary::SetGrammar(DictionaryGrammar &grammar) {
   AddDefaultEntries();
   used_.clear();
   has_grammar_ = true;
+  ReportWarnings();
 }
 
 void Dictionary::SetGrammar(std::string_view file_name) {
@@ -356,6 +357,18 @@ void Dictionary::SetGrammar(std::string_view file_name) {
   AddDefaultEntries();
   used_.clear();
   has_grammar_ = true;
+  ReportWarnings();
+}
+
+void Dictionary::ReportWarnings() {
+  if (warning_stream_ == nullptr)
+    return;
+  for (const auto &warning : warnings_) {
+    std::string text = format_diagnostic(warning);
+    if (reported_warnings_.insert(text).second)
+      *warning_stream_ << text << '\n';
+  }
+  warning_stream_->flush();
 }
 
 bool Dictionary::CheckOption(std::string_view name_of_keyword) const {

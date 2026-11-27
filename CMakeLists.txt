@@ -110,6 +110,13 @@ if (DICTIONARY_PARSER_BUILD_TESTS)
 	)
 	target_compile_definitions(unit_tests PRIVATE
 		DICTIONARY_PARSER_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
+
+	# An uncaught DictionaryError reported by InstallErrorHandler (exit code 3)
+	dictionary_parser_add_test_executable(test_error_handler tests/test_error_handler.cpp)
+	add_test(NAME Test_Error_Handler COMMAND ${CMAKE_COMMAND}
+		-DPROGRAM=$<TARGET_FILE:test_error_handler> -DEXPECTED_EXIT=3
+		-DEXPECTED_TEXT=Fatal\ error\ in\ the\ test\ input
+		-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_exit.cmake)
 	foreach(suite lexer syntax include reads grammar validation units measures diagnostics rules semantics formats typed frontend)
 		add_test(NAME Unit_${suite} COMMAND unit_tests ${suite})
 	endforeach()

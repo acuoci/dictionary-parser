@@ -35,6 +35,8 @@
 
 #include "DictionaryManager.h"
 #include "DictionaryLexer.h"
+
+#include <ostream>
 #include "DictionaryParser.h"
 #include "DictionaryUtilities.h"
 
@@ -166,6 +168,7 @@ void DictionaryManager::Load(std::string_view text,
     dictionary.SetFileName(display_name);
     dictionary.SetUnitSystem(unit_system_);
     dictionary.SetWarningsAsErrors(warnings_as_errors_);
+    dictionary.SetWarningStream(warning_stream_.stream);
     dictionary.SetEntries(std::move(entries));
     dictionary.SetLocation(origin);
     origins_.emplace(block.name, origin);
@@ -212,6 +215,7 @@ void DictionaryManager::Load(std::string_view text,
 }
 
 Dictionary &DictionaryManager::operator()(std::string_view name) {
+  used_dictionaries_.emplace(name);
   const auto it = map_of_dictionaries_.find(name);
   if (it == map_of_dictionaries_.end()) {
     const std::string suggestion = detail::closest_match(name, names());
@@ -226,11 +230,9 @@ Dictionary &DictionaryManager::operator()(std::string_view name) {
   return it->second;
 }
 
-Dictionary &DictionaryManager::AttachGrammar(
-    std::string_view name, const void *grammar_id,
-    const std::string &grammar_name,
-    const std::function<void(Dictionary &)> &attach,
-    const SourceLocation &from) {
+Dictionary &DictionaryManager::Require(std::string_view name,
+                                      const SourceLocation &from) {
+  used_dictionaries_.emplace(name);
   const auto it = map_of_dictionaries_.find(name);
   if (it == map_of_dictionaries_.end()) {
     const std::string suggestion = detail::closest_match(name, names());
@@ -243,7 +245,15 @@ Dictionary &DictionaryManager::AttachGrammar(
                     {}}},
         "DictionaryManager");
   }
-  Dictionary &dictionary = it->second;
+  return it->second;
+}
+
+Dictionary &DictionaryManager::AttachGrammar(
+    std::string_view name, const void *grammar_id,
+    const std::string &grammar_name,
+    const std::function<void(Dictionary &)> &attach,
+    const SourceLocation &from) {
+  Dictionary &dictionary = Require(name, from);
   const auto done = attached_.find(name);
   if (done != attached_.end()) {
     if (done->second.id == grammar_id)
@@ -305,6 +315,27 @@ void DictionaryManager::SetWarningsAsErrors(const bool value) {
   warnings_as_errors_ = value;
   for (auto &[name, dictionary] : map_of_dictionaries_)
     dictionary.SetWarningsAsErrors(value);
+}
+
+DictionaryManager::~DictionaryManager() {
+  if (warning_stream_.stream == nullptr)
+    return;
+  for (const auto &[name, dictionary] : map_of_dictionaries_)
+    if (!used_dictionaries_.contains(name) && !dictionary.has_grammar())
+      *warning_stream_.stream
+          << format_diagnostic(Diagnostic{
+                 Severity::Warning, DiagnosticCode::UnreferencedDictionary,
+                 dictionary.location(),
+                 "the dictionary '" + name + "' was not used",
+                 "check the spelling of the references to it", {}})
+          << '\n';
+  warning_stream_.stream->flush();
+}
+
+void DictionaryManager::SetWarningStream(std::ostream *stream) {
+  warning_stream_.stream = stream;
+  for (auto &[name, dictionary] : map_of_dictionaries_)
+    dictionary.SetWarningStream(stream);
 }
 
 std::vector<Diagnostic> DictionaryManager::CheckUnusedKeywords() const {

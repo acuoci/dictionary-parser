@@ -1767,10 +1767,35 @@ namespace detail {
 struct Walk {
   DictionaryManager *manager = nullptr;
   std::vector<std::string> stack;
-  std::vector<std::string> visited;
+  std::vector<std::string> visited; // validated with a typed grammar
+  std::vector<std::string> named;   // reached through DictionaryName keys
   std::vector<Diagnostic> diagnostics;
 
   template <class G> void visit(const std::string &name, const SourceLocation &from);
+
+  /**
+   * A dictionary named by a DictionaryName key: it must exist; it is not
+   * validated (its grammar is not typed), and the dictionaries whose names
+   * appear among its values are taken as referenced too.
+   */
+  void follow_name(const std::string &target, const SourceLocation &from) {
+    try {
+      (void)manager->Require(target, from);
+    } catch (const DictionaryError &error) {
+      for (const auto &d : error.diagnostics())
+        diagnostics.push_back(d);
+      return;
+    }
+    for (const auto &n : named)
+      if (n == target)
+        return;
+    named.push_back(target);
+    const Dictionary &dictionary = (*manager)(target);
+    for (const auto &entry : dictionary.entries())
+      for (const auto &value : entry.values)
+        if (value != target && manager->contains(value))
+          follow_name(value, dictionary.location_of(entry.keyword));
+  }
 };
 
 template <class G>
@@ -1809,7 +1834,12 @@ void Walk::visit(const std::string &name, const SourceLocation &from) {
         (
             [&](const auto &k) {
               using S = typename std::remove_cvref_t<decltype(k)>::spec_type;
-              if constexpr (is_reference<S>::value || is_reference_list<S>::value) {
+              if constexpr (std::is_same_v<S, DictionaryNameSpec>) {
+                if (!dictionary.CheckOption(k.name()) && !k.default_)
+                  return;
+                follow_name(dictionary.template Read<std::string>(k.name()),
+                            dictionary.location_of(k.name()));
+              } else if constexpr (is_reference<S>::value || is_reference_list<S>::value) {
                 if (!dictionary.CheckOption(k.name()) && !k.default_)
                   return;
                 std::vector<std::string> targets;
@@ -1852,7 +1882,9 @@ auto DictionaryManager::validate(std::string_view root) -> std::vector<Diagnosti
   typed::detail::Walk walk;
   walk.manager = this;
   walk.template visit<G>(std::string(root), {});
-  return FinishValidation(std::move(walk.diagnostics), walk.visited);
+  std::vector<std::string> referenced = walk.visited;
+  referenced.insert(referenced.end(), walk.named.begin(), walk.named.end());
+  return FinishValidation(std::move(walk.diagnostics), referenced);
 }
 } // namespace OpenSMOKEpp
 

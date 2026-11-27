@@ -37,6 +37,7 @@
 #define OpenSMOKEpp_DictionaryDiagnostics_H
 
 #include <cstddef>
+#include <iosfwd>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -262,6 +263,31 @@ private:
   std::vector<Diagnostic> diagnostics_;
   std::string context_;
 };
+
+/** \brief Options of `InstallErrorHandler`. */
+struct ErrorHandlerOptions {
+  /** \brief Stream for the report (`nullptr`: `std::cerr`). */
+  std::ostream *stream = nullptr;
+  /** \brief First line of the report. */
+  std::string title = "Fatal error in the input dictionaries";
+  /** \brief Whether to print "Press enter to exit..." and wait for it. */
+  bool wait_for_enter = false;
+  /** \brief Exit code of the program. */
+  int exit_code = 1;
+};
+
+/**
+ * \brief Reports a `DictionaryError` that no code catches, and exits.
+ *
+ * Installs a `std::terminate` handler: an uncaught `DictionaryError` is
+ * printed (the title, then every diagnostic) and the program exits with
+ * `options.exit_code`, instead of aborting with a platform-dependent message
+ * (or none). Other uncaught exceptions go to the previous handler. Calling it
+ * again only changes the options.
+ *
+ * \param[in] options Where and how to report, and the exit code.
+ */
+void InstallErrorHandler(ErrorHandlerOptions options = {});
 } // namespace OpenSMOKEpp
 
 #endif // OpenSMOKEpp_DictionaryDiagnostics_H
